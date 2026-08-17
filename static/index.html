@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DeadTracker</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #14151a;
+    --panel: #1d1f26;
+    --border: #2c2f3a;
+    --text: #e8e9ed;
+    --muted: #8b8fa3;
+    --win: #4ade80;
+    --loss: #f87171;
+    --accent: #7c9cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 24px;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 16px; }
+  .row { display: flex; gap: 8px; margin-bottom: 20px; }
+  input {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 0.95rem;
+  }
+  button {
+    background: var(--accent);
+    color: #0e0f13;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { opacity: 0.9; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .panel h2 { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 0 0 12px; }
+  .live-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
+  .live-yes { background: rgba(74, 222, 128, 0.15); color: var(--win); }
+  .live-no { background: rgba(139, 143, 163, 0.15); color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 0.8rem; }
+  .outcome-win { color: var(--win); }
+  .outcome-loss { color: var(--loss); }
+  .muted { color: var(--muted); }
+  #status { font-size: 0.85rem; color: var(--muted); margin-bottom: 12px; }
+</style>
+</head>
+<body>
+  <h1>DeadTracker</h1>
+  <div class="row">
+    <input id="accountIdInput" type="text" placeholder="Steam account_id (e.g. 1081867932)">
+    <button onclick="track()">Track</button>
+  </div>
+  <div id="status"></div>
+
+  <div class="panel">
+    <h2>Live Status</h2>
+    <div id="liveContent" class="muted">Enter an account_id above to start tracking.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Recent Matches</h2>
+    <div id="matchesContent" class="muted">No data yet.</div>
+  </div>
+
+<script>
+const LIVE_POLL_MS = 15000;
+let currentAccountId = null;
+let liveTimer = null;
+
+function track() {
+  const val = document.getElementById('accountIdInput').value.trim();
+  if (!/^\d+$/.test(val)) {
+    setStatus('account_id must be a number (SteamID3).');
+    return;
+  }
+  localStorage.setItem('deadtracker_account_id', val);
+  startTracking(val);
+}
+
+function startTracking(accountId) {
+  currentAccountId = accountId;
+  document.getElementById('accountIdInput').value = accountId;
+  setStatus(`Tracking account_id=${accountId}`);
+  if (liveTimer) clearInterval(liveTimer);
+  refreshLive();
+  refreshMatches();
+  liveTimer = setInterval(refreshLive, LIVE_POLL_MS);
+}
+
+function setStatus(msg) {
+  document.getElementById('status').textContent = msg;
+}
+
+async function refreshLive() {
+  if (!currentAccountId) return;
+  try {
+    const resp = await fetch(`/players/${currentAccountId}/live`);
+    const data = await resp.json();
+    renderLive(data);
+  } catch (e) {
+    document.getElementById('liveContent').innerHTML = `<span class="muted">Failed to fetch live status.</span>`;
+  }
+}
+
+function renderLive(data) {
+  const el = document.getElementById('liveContent');
+  if (data.live && data.match) {
+    const m = data.match;
+    const started = m.start_time ? new Date(m.start_time * 1000).toLocaleTimeString() : '?';
+    el.innerHTML = `
+      <span class="live-badge live-yes">LIVE</span>
+      <div style="margin-top:10px;">
+        Hero: <strong>${m.hero_name ?? '?'}</strong><br>
+        Match ID: ${m.match_id ?? '?'}<br>
+        Team: ${m.team ?? '?'}<br>
+        Started: ${started}<br>
+        Spectators: ${m.spectators ?? 0}
+      </div>`;
+  } else {
+    el.innerHTML = `<span class="live-badge live-no">OFFLINE</span>`;
+  }
+}
+
+async function refreshMatches() {
+  if (!currentAccountId) return;
+  try {
+    const resp = await fetch(`/players/${currentAccountId}/matches`);
+    const data = await resp.json();
+    renderMatches(data.matches);
+  } catch (e) {
+    document.getElementById('matchesContent').innerHTML = `<span class="muted">Failed to fetch match history.</span>`;
+  }
+}
+
+function renderMatches(matches) {
+  const el = document.getElementById('matchesContent');
+  if (!matches || matches.length === 0) {
+    el.innerHTML = `<span class="muted">No matches found.</span>`;
+    return;
+  }
+  const outcomeLabels = {0: 'invalid', 1: 'win', 2: 'loss', 3: 'penalized', 4: 'penalized_party', 5: 'not_scored'};
+  const rows = matches.slice(0, 20).map(m => {
+    const outcome = outcomeLabels[m.player_match_outcome] ?? '?';
+    const outcomeClass = outcome === 'win' ? 'outcome-win' : (outcome === 'loss' ? 'outcome-loss' : '');
+    const durationMin = Math.floor(m.match_duration_s / 60);
+    return `<tr>
+      <td>${m.hero_name}</td>
+      <td>${m.player_kills}/${m.player_deaths}/${m.player_assists}</td>
+      <td class="${outcomeClass}">${outcome}</td>
+      <td>${durationMin}m</td>
+      <td>${m.rank_label}</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `<table>
+    <thead><tr><th>Hero</th><th>KDA</th><th>Outcome</th><th>Duration</th><th>Rank</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  const saved = localStorage.getItem('deadtracker_account_id');
+  if (saved) startTracking(saved);
+});
+</script>
+</body>
+</html>
