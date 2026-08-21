@@ -10,12 +10,15 @@ import sqlite3
 import time
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "deadtracker.db"
+DB_PATH = Path(__file__).parent / "data" / "deadtracker.db"
+DB_PATH.parent.mkdir(exist_ok=True)
 
 HEROES_TTL_S = 24 * 60 * 60
 RANKS_TTL_S = 24 * 60 * 60
+ITEMS_TTL_S = 24 * 60 * 60
 MATCH_HISTORY_TTL_S = 5 * 60
 LIVE_STATUS_TTL_S = 30
+MATCH_METADATA_TTL_S = 24 * 60 * 60  # finished matches never change; long TTL just to bound cache size
 
 
 def get_conn() -> sqlite3.Connection:
@@ -40,6 +43,10 @@ def init_db(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS live_status (account_id INTEGER PRIMARY KEY, data TEXT NOT NULL)"
+    )
+    conn.execute("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, type TEXT)")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS match_metadata (match_id INTEGER PRIMARY KEY, data TEXT NOT NULL)"
     )
     conn.commit()
 
@@ -135,4 +142,39 @@ def set_cached_live_status(conn: sqlite3.Connection, account_id: int, status: di
         (account_id, json.dumps(status)),
     )
     _touch(conn, f"live_status:{account_id}")
+    conn.commit()
+
+
+def get_cached_items(conn: sqlite3.Connection) -> dict[int, dict] | None:
+    if not _is_fresh(conn, "items", ITEMS_TTL_S):
+        return None
+    rows = conn.execute("SELECT id, name, type FROM items").fetchall()
+    return {row["id"]: {"name": row["name"], "type": row["type"]} for row in rows}
+
+
+def set_cached_items(conn: sqlite3.Connection, items: dict[int, dict]) -> None:
+    conn.execute("DELETE FROM items")
+    conn.executemany(
+        "INSERT INTO items (id, name, type) VALUES (?, ?, ?)",
+        [(item_id, info["name"], info["type"]) for item_id, info in items.items()],
+    )
+    _touch(conn, "items")
+    conn.commit()
+
+
+def get_cached_match_metadata(conn: sqlite3.Connection, match_id: int) -> dict | None:
+    key = f"match_metadata:{match_id}"
+    if not _is_fresh(conn, key, MATCH_METADATA_TTL_S):
+        return None
+    row = conn.execute("SELECT data FROM match_metadata WHERE match_id = ?", (match_id,)).fetchone()
+    return json.loads(row["data"]) if row else None
+
+
+def set_cached_match_metadata(conn: sqlite3.Connection, match_id: int, data: dict) -> None:
+    conn.execute(
+        "INSERT INTO match_metadata (match_id, data) VALUES (?, ?) "
+        "ON CONFLICT(match_id) DO UPDATE SET data = excluded.data",
+        (match_id, json.dumps(data)),
+    )
+    _touch(conn, f"match_metadata:{match_id}")
     conn.commit()

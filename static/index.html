@@ -62,15 +62,36 @@
   .outcome-loss { color: var(--loss); }
   .muted { color: var(--muted); }
   #status { font-size: 0.85rem; color: var(--muted); margin-bottom: 12px; }
+  .candidate {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .candidate:hover { background: var(--border); }
+  .candidate img { width: 32px; height: 32px; border-radius: 4px; }
+  .stat-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .stat-columns h3 { font-size: 0.8rem; color: var(--muted); font-weight: 500; margin: 0 0 8px; }
+  .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stat-tile { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; text-align: center; }
+  .stat-value { font-size: 1.2rem; font-weight: 700; }
+  .stat-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  tr.match-row { cursor: pointer; }
+  tr.match-row:hover { background: var(--border); }
+  .timeline-item { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+  .timeline-item .time { color: var(--muted); font-variant-numeric: tabular-nums; width: 60px; flex-shrink: 0; }
 </style>
 </head>
 <body>
   <h1>DeadTracker</h1>
   <div class="row">
-    <input id="accountIdInput" type="text" placeholder="Steam account_id (e.g. 1081867932)">
+    <input id="accountIdInput" type="text" placeholder="Steam profile URL, SteamID64, or name">
     <button onclick="track()">Track</button>
   </div>
   <div id="status"></div>
+  <div id="candidates"></div>
 
   <div class="panel">
     <h2>Live Status</h2>
@@ -78,8 +99,19 @@
   </div>
 
   <div class="panel">
-    <h2>Recent Matches</h2>
+    <h2>Stats</h2>
+    <div id="statsContent" class="muted">No data yet.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Match History</h2>
+    <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Click a match to see its item build timeline.</div>
     <div id="matchesContent" class="muted">No data yet.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Item Timeline</h2>
+    <div id="itemsContent" class="muted">Click a match above to see its build order.</div>
   </div>
 
 <script>
@@ -87,14 +119,44 @@ const LIVE_POLL_MS = 15000;
 let currentAccountId = null;
 let liveTimer = null;
 
-function track() {
+async function track() {
   const val = document.getElementById('accountIdInput').value.trim();
-  if (!/^\d+$/.test(val)) {
-    setStatus('account_id must be a number (SteamID3).');
-    return;
+  if (!val) return;
+  document.getElementById('candidates').innerHTML = '';
+  setStatus(`Resolving '${val}'...`);
+
+  try {
+    const resp = await fetch(`/resolve?query=${encodeURIComponent(val)}`);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      setStatus(err.detail || `Could not resolve '${val}'.`);
+      return;
+    }
+    const data = await resp.json();
+    if (data.account_id != null) {
+      beginTracking(data.account_id);
+    } else if (data.candidates) {
+      renderCandidates(data.candidates);
+    }
+  } catch (e) {
+    setStatus('Failed to resolve player. Is the server running?');
   }
-  localStorage.setItem('deadtracker_account_id', val);
-  startTracking(val);
+}
+
+function renderCandidates(candidates) {
+  setStatus(`Multiple profiles match — pick one:`);
+  const el = document.getElementById('candidates');
+  el.innerHTML = candidates.map(c => `
+    <div class="candidate" onclick="beginTracking(${c.account_id})">
+      ${c.avatar ? `<img src="${c.avatar}">` : ''}
+      <span>${c.personaname ?? 'Unknown'} <span class="muted">(account_id=${c.account_id})</span></span>
+    </div>`).join('');
+}
+
+function beginTracking(accountId) {
+  document.getElementById('candidates').innerHTML = '';
+  localStorage.setItem('deadtracker_account_id', accountId);
+  startTracking(accountId);
 }
 
 function startTracking(accountId) {
@@ -104,6 +166,7 @@ function startTracking(accountId) {
   if (liveTimer) clearInterval(liveTimer);
   refreshLive();
   refreshMatches();
+  refreshStats();
   liveTimer = setInterval(refreshLive, LIVE_POLL_MS);
 }
 
@@ -152,29 +215,146 @@ async function refreshMatches() {
   }
 }
 
+const OUTCOME_LABELS = {0: 'invalid', 1: 'win', 2: 'loss', 3: 'penalized', 4: 'penalized_party', 5: 'not_scored'};
+
+function weeksAgoLabel(startTimeUnix) {
+  const diffDays = Math.floor((Date.now() - startTimeUnix * 1000) / (1000 * 60 * 60 * 24));
+  const weeksAgo = Math.floor(diffDays / 7);
+  if (weeksAgo <= 0) return 'This week';
+  if (weeksAgo === 1) return '1 week ago';
+  return `${weeksAgo} weeks ago`;
+}
+
+function matchRowHtml(m) {
+  const outcome = OUTCOME_LABELS[m.player_match_outcome] ?? '?';
+  const outcomeClass = outcome === 'win' ? 'outcome-win' : (outcome === 'loss' ? 'outcome-loss' : '');
+  const durationMin = Math.floor(m.match_duration_s / 60);
+  return `<tr class="match-row" onclick="showItemTimeline(${m.match_id})">
+    <td>${m.hero_name}</td>
+    <td>${m.player_kills}/${m.player_deaths}/${m.player_assists}</td>
+    <td class="${outcomeClass}">${outcome}</td>
+    <td>${durationMin}m</td>
+    <td>${m.rank_label}</td>
+  </tr>`;
+}
+
 function renderMatches(matches) {
   const el = document.getElementById('matchesContent');
   if (!matches || matches.length === 0) {
     el.innerHTML = `<span class="muted">No matches found.</span>`;
     return;
   }
-  const outcomeLabels = {0: 'invalid', 1: 'win', 2: 'loss', 3: 'penalized', 4: 'penalized_party', 5: 'not_scored'};
-  const rows = matches.slice(0, 20).map(m => {
-    const outcome = outcomeLabels[m.player_match_outcome] ?? '?';
-    const outcomeClass = outcome === 'win' ? 'outcome-win' : (outcome === 'loss' ? 'outcome-loss' : '');
-    const durationMin = Math.floor(m.match_duration_s / 60);
-    return `<tr>
-      <td>${m.hero_name}</td>
-      <td>${m.player_kills}/${m.player_deaths}/${m.player_assists}</td>
-      <td class="${outcomeClass}">${outcome}</td>
-      <td>${durationMin}m</td>
-      <td>${m.rank_label}</td>
-    </tr>`;
-  }).join('');
-  el.innerHTML = `<table>
-    <thead><tr><th>Hero</th><th>KDA</th><th>Outcome</th><th>Duration</th><th>Rank</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
+
+  const groups = new Map();
+  for (const m of matches) {
+    const label = weeksAgoLabel(m.start_time);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(m);
+  }
+
+  el.innerHTML = [...groups.entries()].map(([label, groupMatches]) => `
+    <h3 style="font-size:0.85rem; color:var(--muted); font-weight:500; margin:16px 0 8px;">${label} <span class="muted">(${groupMatches.length})</span></h3>
+    <table>
+      <thead><tr><th>Hero</th><th>KDA</th><th>Outcome</th><th>Duration</th><th>Rank</th></tr></thead>
+      <tbody>${groupMatches.map(matchRowHtml).join('')}</tbody>
+    </table>`).join('');
+}
+
+function formatGameTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+async function showItemTimeline(matchId) {
+  const el = document.getElementById('itemsContent');
+  el.innerHTML = `<span class="muted">Loading...</span>`;
+  try {
+    const resp = await fetch(`/matches/${matchId}/players/${currentAccountId}/items`);
+    if (!resp.ok) {
+      el.innerHTML = `<span class="muted">Could not load item timeline for this match.</span>`;
+      return;
+    }
+    const data = await resp.json();
+    renderItemTimeline(data);
+  } catch (e) {
+    el.innerHTML = `<span class="muted">Failed to fetch item timeline.</span>`;
+  }
+}
+
+function renderItemTimeline(data) {
+  const el = document.getElementById('itemsContent');
+  if (!data.purchases || data.purchases.length === 0) {
+    el.innerHTML = `<span class="muted">No item purchases recorded for this match.</span>`;
+    return;
+  }
+  const rows = data.purchases.map(p => `
+    <div class="timeline-item">
+      <span class="time">${formatGameTime(p.game_time_s)}</span>
+      <span style="flex:1;">${p.item_name}</span>
+      ${p.sold_time_s != null ? `<span class="muted">sold @ ${formatGameTime(p.sold_time_s)}</span>` : ''}
+    </div>`).join('');
+  el.innerHTML = `<div class="muted" style="margin-bottom:8px;">${data.hero_name} — match ${data.match_id}</div>${rows}`;
+}
+
+async function refreshStats() {
+  if (!currentAccountId) return;
+  try {
+    const resp = await fetch(`/players/${currentAccountId}/stats`);
+    const data = await resp.json();
+    renderStats(data);
+  } catch (e) {
+    document.getElementById('statsContent').innerHTML = `<span class="muted">Failed to fetch stats.</span>`;
+  }
+}
+
+function statTile(label, value) {
+  return `<div class="stat-tile"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div>`;
+}
+
+function statBlock(summary) {
+  if (!summary || summary.games === 0) {
+    return `<div class="stat-grid">${statTile('Games', 0)}</div>`;
+  }
+  return `<div class="stat-grid">
+    ${statTile('Win Rate', summary.win_rate + '%')}
+    ${statTile('Games', summary.games)}
+    ${statTile('Avg KDA', summary.avg_kda ?? '-')}
+  </div>`;
+}
+
+function renderStats(data) {
+  const el = document.getElementById('statsContent');
+  if (!data.all_time || data.all_time.games === 0) {
+    el.innerHTML = `<span class="muted">No ranked/scored matches found yet.</span>`;
+    return;
+  }
+
+  const heroRows = data.by_hero.slice(0, 8).map(h => `<tr>
+    <td>${h.hero_name}</td>
+    <td>${h.games}</td>
+    <td>${h.win_rate}%</td>
+    <td>${h.avg_kda ?? '-'}</td>
+  </tr>`).join('');
+
+  el.innerHTML = `
+    <div class="stat-columns">
+      <div>
+        <h3>All-time</h3>
+        ${statBlock(data.all_time)}
+      </div>
+      <div>
+        <h3>Last ${data.recent_n} games</h3>
+        ${statBlock(data.recent)}
+      </div>
+    </div>
+    <div style="margin-top:16px;">
+      <h3>By Hero</h3>
+      <table>
+        <thead><tr><th>Hero</th><th>Games</th><th>Win Rate</th><th>Avg KDA</th></tr></thead>
+        <tbody>${heroRows}</tbody>
+      </table>
+    </div>`;
 }
 
 window.addEventListener('DOMContentLoaded', () => {

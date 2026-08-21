@@ -20,11 +20,23 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 
 import cache
-from fetch_match_history import fetch_active_matches, fetch_heroes, fetch_match_history, fetch_ranks, format_rank
+from fetch_match_history import (
+    extract_vanity_name,
+    fetch_active_matches,
+    fetch_heroes,
+    fetch_items,
+    fetch_match_history,
+    fetch_match_metadata,
+    fetch_ranks,
+    format_rank,
+    parse_account_id_input,
+    search_steam_profiles,
+)
+from stats import compute_stats
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("deadtracker.refresh")
@@ -47,6 +59,22 @@ def get_ranks(conn) -> dict[int, str]:
         ranks = fetch_ranks()
         cache.set_cached_ranks(conn, ranks)
     return ranks
+
+
+def get_items(conn) -> dict[int, dict]:
+    items = cache.get_cached_items(conn)
+    if items is None:
+        items = fetch_items()
+        cache.set_cached_items(conn, items)
+    return items
+
+
+def get_match_metadata(conn, match_id: int) -> dict:
+    data = cache.get_cached_match_metadata(conn, match_id)
+    if data is None:
+        data = fetch_match_metadata(match_id)
+        cache.set_cached_match_metadata(conn, match_id, data)
+    return data
 
 
 def refresh_tracked_accounts() -> None:
@@ -91,6 +119,31 @@ def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/resolve")
+def resolve_player(query: str = Query(..., min_length=1, description="Steam profile URL, SteamID64, account_id, or persona name")):
+    account_id = parse_account_id_input(query)
+    if account_id is not None:
+        return {"account_id": account_id}
+
+    search_term = extract_vanity_name(query) or query
+    results = search_steam_profiles(search_term)
+    if not results:
+        raise HTTPException(status_code=404, detail=f"No Steam profiles found for '{query}'")
+    if len(results) == 1:
+        return {"account_id": results[0]["account_id"]}
+
+    return {
+        "candidates": [
+            {
+                "account_id": r["account_id"],
+                "personaname": r.get("personaname"),
+                "avatar": r.get("avatar"),
+            }
+            for r in results
+        ]
+    }
+
+
 def get_match_history(conn, account_id: int, refresh: bool) -> list[dict]:
     matches = None if refresh else cache.get_cached_match_history(conn, account_id)
     if matches is None:
@@ -99,19 +152,11 @@ def get_match_history(conn, account_id: int, refresh: bool) -> list[dict]:
     return matches
 
 
-@app.get("/players/{account_id}/matches")
-def get_matches(account_id: int, refresh: bool = Query(False, description="Bypass cache and refetch from deadlock-api.com")):
-    conn = cache.get_conn()
-    cache.init_db(conn)
-    try:
-        cache.track_account(conn, account_id)
-        heroes = get_heroes(conn)
-        ranks = get_ranks(conn)
-        matches = get_match_history(conn, account_id, refresh)
-    finally:
-        conn.close()
-
-    enriched = [
+def get_enriched_matches(conn, account_id: int, refresh: bool) -> list[dict]:
+    heroes = get_heroes(conn)
+    ranks = get_ranks(conn)
+    matches = get_match_history(conn, account_id, refresh)
+    return [
         {
             **m,
             "hero_name": heroes.get(m["hero_id"], f"hero_id {m['hero_id']}"),
@@ -119,7 +164,36 @@ def get_matches(account_id: int, refresh: bool = Query(False, description="Bypas
         }
         for m in matches
     ]
+
+
+@app.get("/players/{account_id}/matches")
+def get_matches(account_id: int, refresh: bool = Query(False, description="Bypass cache and refetch from deadlock-api.com")):
+    conn = cache.get_conn()
+    cache.init_db(conn)
+    try:
+        cache.track_account(conn, account_id)
+        enriched = get_enriched_matches(conn, account_id, refresh)
+    finally:
+        conn.close()
+
     return {"account_id": account_id, "matches_returned": len(enriched), "matches": enriched}
+
+
+@app.get("/players/{account_id}/stats")
+def get_stats(
+    account_id: int,
+    refresh: bool = Query(False, description="Bypass cache and refetch from deadlock-api.com"),
+    recent_n: int = Query(20, ge=1, le=100, description="Number of most recent games considered 'recent'"),
+):
+    conn = cache.get_conn()
+    cache.init_db(conn)
+    try:
+        cache.track_account(conn, account_id)
+        enriched = get_enriched_matches(conn, account_id, refresh)
+    finally:
+        conn.close()
+
+    return {"account_id": account_id, **compute_stats(enriched, recent_n=recent_n)}
 
 
 def get_live_status(conn, account_id: int, refresh: bool) -> dict:
@@ -152,6 +226,46 @@ def get_live_status(conn, account_id: int, refresh: bool) -> dict:
 
     cache.set_cached_live_status(conn, account_id, status)
     return status
+
+
+@app.get("/matches/{match_id}/players/{account_id}/items")
+def get_match_items(match_id: int, account_id: int):
+    conn = cache.get_conn()
+    cache.init_db(conn)
+    try:
+        heroes = get_heroes(conn)
+        items = get_items(conn)
+        metadata = get_match_metadata(conn, match_id)
+    finally:
+        conn.close()
+
+    player = next(
+        (p for p in metadata.get("match_info", {}).get("players", []) if p.get("account_id") == account_id),
+        None,
+    )
+    if player is None:
+        raise HTTPException(status_code=404, detail=f"account_id {account_id} not found in match {match_id}")
+
+    purchases = [
+        {
+            "game_time_s": entry["game_time_s"],
+            "item_id": entry["item_id"],
+            "item_name": items.get(entry["item_id"], {}).get("name", f"item_id {entry['item_id']}"),
+            "sold_time_s": entry["sold_time_s"] or None,
+        }
+        for entry in player.get("items", [])
+        if items.get(entry["item_id"], {}).get("type") == "upgrade"
+    ]
+    purchases.sort(key=lambda p: p["game_time_s"])
+
+    hero_id = player.get("hero_id")
+    return {
+        "match_id": match_id,
+        "account_id": account_id,
+        "hero_id": hero_id,
+        "hero_name": heroes.get(hero_id, f"hero_id {hero_id}"),
+        "purchases": purchases,
+    }
 
 
 @app.get("/players/{account_id}/live")

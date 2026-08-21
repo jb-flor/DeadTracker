@@ -12,20 +12,32 @@ API docs: https://api.deadlock-api.com/docs
 """
 
 import json
+import re
 import sys
 
 import requests
 
 BASE_URL = "https://api.deadlock-api.com"
 
+STEAMID64_OFFSET = 76561197960265728
 
-def resolve_account_id(query: str) -> int:
+
+def search_steam_profiles(query: str) -> list[dict]:
     resp = requests.get(
         f"{BASE_URL}/v1/players/steam-search",
-        params={"search_query": query, "limit": 5},
+        params={"search_query": query, "limit": 25},
     )
+    if resp.status_code == 404:
+        return []
     resp.raise_for_status()
     results = resp.json()
+
+    exact = [r for r in results if (r.get("personaname") or "").lower() == query.strip().lower()]
+    return exact if exact else results
+
+
+def resolve_account_id(query: str) -> int:
+    results = search_steam_profiles(query)
     if not results:
         raise SystemExit(f"No Steam profiles found for '{query}'")
 
@@ -36,6 +48,30 @@ def resolve_account_id(query: str) -> int:
         print("Using the first result. Re-run with an explicit account_id to pick another.\n")
 
     return results[0]["account_id"]
+
+
+def parse_account_id_input(raw: str) -> int | None:
+    """Best-effort, network-free extraction of an account_id from a raw account_id,
+    a SteamID64, or a full steamcommunity.com/profiles/<id> URL. Returns None if
+    `raw` doesn't look like any of those (e.g. a name or a vanity URL), meaning a
+    name search is needed instead."""
+    raw = raw.strip()
+
+    match = re.search(r"steamcommunity\.com/profiles/(\d+)", raw)
+    if match:
+        return int(match.group(1)) - STEAMID64_OFFSET
+
+    if raw.isdigit():
+        value = int(raw)
+        return value - STEAMID64_OFFSET if value >= STEAMID64_OFFSET else value
+
+    return None
+
+
+def extract_vanity_name(raw: str) -> str | None:
+    """Pulls the vanity name out of a steamcommunity.com/id/<name> URL, if present."""
+    match = re.search(r"steamcommunity\.com/id/([^/\s]+)", raw.strip())
+    return match.group(1) if match else None
 
 
 def fetch_match_history(account_id: int) -> list[dict]:
@@ -54,6 +90,18 @@ def fetch_ranks() -> dict[int, str]:
     resp = requests.get(f"{BASE_URL}/v1/assets/ranks")
     resp.raise_for_status()
     return {rank["tier"]: rank["name"] for rank in resp.json()}
+
+
+def fetch_items() -> dict[int, dict]:
+    resp = requests.get(f"{BASE_URL}/v1/assets/items")
+    resp.raise_for_status()
+    return {item["id"]: {"name": item["name"], "type": item.get("type")} for item in resp.json()}
+
+
+def fetch_match_metadata(match_id: int) -> dict:
+    resp = requests.get(f"{BASE_URL}/v1/matches/{match_id}/metadata")
+    resp.raise_for_status()
+    return resp.json()
 
 
 def fetch_active_matches(account_ids: list[int]) -> list[dict]:
