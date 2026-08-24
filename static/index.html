@@ -14,6 +14,7 @@
     --win: #4ade80;
     --loss: #f87171;
     --accent: #7c9cff;
+    --accent2: #f6c453;
   }
   * { box-sizing: border-box; }
   body {
@@ -82,6 +83,45 @@
   tr.match-row:hover { background: var(--border); }
   .timeline-item { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
   .timeline-item .time { color: var(--muted); font-variant-numeric: tabular-nums; width: 60px; flex-shrink: 0; }
+  .section-label { margin: 14px 0 4px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .section-label:first-child { margin-top: 0; }
+  .compare-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .compare-columns > div { min-width: 0; }
+  .compare-columns h3 { font-size: 0.9rem; margin: 0 0 4px; }
+  .mini-match { padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; display: flex; justify-content: space-between; }
+  .mini-match:hover { background: var(--border); }
+  .mini-match.selected { background: rgba(124, 156, 255, 0.15); }
+  .chart-legend { display: flex; gap: 16px; font-size: 0.8rem; color: var(--muted); margin: 6px 0 10px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+  .dot-a { background: var(--accent); }
+  .dot-b { background: var(--accent2); }
+  select {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 0.95rem;
+  }
+  .rank-bar-cell { position: relative; }
+  .rank-bar { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(124, 156, 255, 0.18); border-radius: 3px; }
+  .rank-bar-cell span { position: relative; }
+  tr.hero-row { cursor: pointer; }
+  tr.hero-row:hover { background: var(--border); }
+  .patch-entry { border-bottom: 1px solid var(--border); padding: 10px 0; }
+  .patch-entry:last-child { border-bottom: none; }
+  .patch-summary { cursor: pointer; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; list-style: none; }
+  .patch-summary::-webkit-details-marker { display: none; }
+  .patch-marker::before { content: '+'; display: inline-block; width: 14px; color: var(--muted); }
+  details[open] > .patch-summary .patch-marker::before { content: '\2212'; }
+  .patch-title { font-weight: 600; }
+  .patch-date { color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
+  .patch-body { margin-top: 10px; font-size: 0.9rem; line-height: 1.5; color: var(--text); }
+  .patch-body p { margin: 0 0 8px; }
+  .patch-body a { color: var(--accent); }
+  .patch-source { display: inline-block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; margin-right: 8px; }
+  .patch-entry.patch-highlighted { background: rgba(124, 156, 255, 0.08); border-left: 3px solid var(--accent); padding-left: 8px; margin-left: -11px; }
+  .patch-hero-tag { display: inline-block; font-size: 0.7rem; font-weight: 600; color: var(--accent); background: rgba(124, 156, 255, 0.15); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
 </style>
 </head>
 <body>
@@ -104,20 +144,61 @@
   </div>
 
   <div class="panel">
+    <h2>Hero Win Rates</h2>
+    <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Community-wide win rate by rank (last 30 days). Pick a hero below, or click one in your Stats above.</div>
+    <div class="row" style="margin-bottom:12px;">
+      <select id="heroSelect"><option value="">Select a hero...</option></select>
+    </div>
+    <div id="heroWinrateContent" class="muted">Pick a hero to see its win rate by rank.</div>
+  </div>
+
+  <div class="panel">
     <h2>Match History</h2>
     <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Click a match to see its item build timeline.</div>
     <div id="matchesContent" class="muted">No data yet.</div>
   </div>
 
   <div class="panel">
-    <h2>Item Timeline</h2>
-    <div id="itemsContent" class="muted">Click a match above to see its build order.</div>
+    <h2>Build Timeline</h2>
+    <div id="itemsContent" class="muted">Click a match above to see its item purchases and ability upgrades.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Compare Build</h2>
+    <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Pick one of your matches above, then search for another player and pick one of their matches to compare builds side by side.</div>
+    <div class="row" style="margin-bottom:12px;">
+      <input id="compareInput" type="text" placeholder="Steam profile URL, SteamID64, or name">
+      <button onclick="compareSearch()">Search</button>
+    </div>
+    <div id="compareStatus" class="muted"></div>
+    <div id="compareCandidates"></div>
+    <div id="compareMatches"></div>
+    <div id="compareResult"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Patch Notes</h2>
+    <div class="muted" style="font-size:0.8rem; margin-bottom:4px;">Pulled live from Deadlock's Steam news feed — updates automatically as new patches are published, nothing to add manually.</div>
+    <div id="patchHighlightNote" class="muted" style="font-size:0.8rem; margin-bottom:8px;"></div>
+    <div id="patchesContent" class="muted">Loading patch notes...</div>
   </div>
 
 <script>
 const LIVE_POLL_MS = 15000;
 let currentAccountId = null;
+let currentMatchId = null;
 let liveTimer = null;
+let compareAccountId = null;
+let compareMatchId = null;
+
+async function resolveQuery(query) {
+  const resp = await fetch(`/resolve?query=${encodeURIComponent(query)}`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || `Could not resolve '${query}'.`);
+  }
+  return resp.json();
+}
 
 async function track() {
   const val = document.getElementById('accountIdInput').value.trim();
@@ -126,20 +207,14 @@ async function track() {
   setStatus(`Resolving '${val}'...`);
 
   try {
-    const resp = await fetch(`/resolve?query=${encodeURIComponent(val)}`);
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      setStatus(err.detail || `Could not resolve '${val}'.`);
-      return;
-    }
-    const data = await resp.json();
+    const data = await resolveQuery(val);
     if (data.account_id != null) {
       beginTracking(data.account_id);
     } else if (data.candidates) {
       renderCandidates(data.candidates);
     }
   } catch (e) {
-    setStatus('Failed to resolve player. Is the server running?');
+    setStatus(e.message || 'Failed to resolve player. Is the server running?');
   }
 }
 
@@ -229,7 +304,7 @@ function matchRowHtml(m) {
   const outcome = OUTCOME_LABELS[m.player_match_outcome] ?? '?';
   const outcomeClass = outcome === 'win' ? 'outcome-win' : (outcome === 'loss' ? 'outcome-loss' : '');
   const durationMin = Math.floor(m.match_duration_s / 60);
-  return `<tr class="match-row" onclick="showItemTimeline(${m.match_id})">
+  return `<tr class="match-row" onclick="showMatchTimeline(${m.match_id})">
     <td>${m.hero_name}</td>
     <td>${m.player_kills}/${m.player_deaths}/${m.player_assists}</td>
     <td class="${outcomeClass}">${outcome}</td>
@@ -266,35 +341,53 @@ function formatGameTime(seconds) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-async function showItemTimeline(matchId) {
+function purchaseRowHtml(p) {
+  return `<div class="timeline-item">
+    <span class="time">${formatGameTime(p.game_time_s)}</span>
+    <span style="flex:1;">${p.item_name}</span>
+    ${p.sold_time_s != null ? `<span class="muted">sold @ ${formatGameTime(p.sold_time_s)}</span>` : ''}
+  </div>`;
+}
+
+function abilityRowHtml(a) {
+  return `<div class="timeline-item">
+    <span class="time">${formatGameTime(a.game_time_s)}</span>
+    <span style="flex:1;">${a.ability_name}</span>
+    <span class="muted">Lv${a.level}</span>
+  </div>`;
+}
+
+async function showMatchTimeline(matchId) {
   const el = document.getElementById('itemsContent');
   el.innerHTML = `<span class="muted">Loading...</span>`;
   try {
     const resp = await fetch(`/matches/${matchId}/players/${currentAccountId}/items`);
     if (!resp.ok) {
-      el.innerHTML = `<span class="muted">Could not load item timeline for this match.</span>`;
+      el.innerHTML = `<span class="muted">Could not load build timeline for this match.</span>`;
       return;
     }
     const data = await resp.json();
-    renderItemTimeline(data);
+    currentMatchId = matchId;
+    renderMatchTimeline(el, data, null);
   } catch (e) {
-    el.innerHTML = `<span class="muted">Failed to fetch item timeline.</span>`;
+    el.innerHTML = `<span class="muted">Failed to fetch build timeline.</span>`;
   }
 }
 
-function renderItemTimeline(data) {
-  const el = document.getElementById('itemsContent');
-  if (!data.purchases || data.purchases.length === 0) {
-    el.innerHTML = `<span class="muted">No item purchases recorded for this match.</span>`;
-    return;
-  }
-  const rows = data.purchases.map(p => `
-    <div class="timeline-item">
-      <span class="time">${formatGameTime(p.game_time_s)}</span>
-      <span style="flex:1;">${p.item_name}</span>
-      ${p.sold_time_s != null ? `<span class="muted">sold @ ${formatGameTime(p.sold_time_s)}</span>` : ''}
-    </div>`).join('');
-  el.innerHTML = `<div class="muted" style="margin-bottom:8px;">${data.hero_name} — match ${data.match_id}</div>${rows}`;
+function renderMatchTimeline(el, data, label) {
+  const heading = `${label ? label + ' — ' : ''}${data.hero_name} — match ${data.match_id}`;
+  const purchases = data.purchases && data.purchases.length
+    ? data.purchases.map(purchaseRowHtml).join('')
+    : `<span class="muted">No item purchases recorded.</span>`;
+  const abilities = data.ability_upgrades && data.ability_upgrades.length
+    ? data.ability_upgrades.map(abilityRowHtml).join('')
+    : `<span class="muted">No ability upgrades recorded.</span>`;
+  el.innerHTML = `
+    <div class="muted" style="margin-bottom:8px;">${heading}</div>
+    <div class="section-label">Items</div>
+    ${purchases}
+    <div class="section-label">Abilities</div>
+    ${abilities}`;
 }
 
 async function refreshStats() {
@@ -327,10 +420,11 @@ function renderStats(data) {
   const el = document.getElementById('statsContent');
   if (!data.all_time || data.all_time.games === 0) {
     el.innerHTML = `<span class="muted">No ranked/scored matches found yet.</span>`;
+    updateTopHeroes([]);
     return;
   }
 
-  const heroRows = data.by_hero.slice(0, 8).map(h => `<tr>
+  const heroRows = data.by_hero.slice(0, 8).map(h => `<tr class="hero-row" onclick="selectHeroWinrate(${h.hero_id})">
     <td>${h.hero_name}</td>
     <td>${h.games}</td>
     <td>${h.win_rate}%</td>
@@ -355,9 +449,307 @@ function renderStats(data) {
         <tbody>${heroRows}</tbody>
       </table>
     </div>`;
+
+  updateTopHeroes(data.recent_by_hero || []);
+}
+
+const TOP_HERO_MIN_GAMES = 2;
+const TOP_HERO_COUNT = 3;
+let topHeroNames = [];
+
+function updateTopHeroes(recentByHero) {
+  topHeroNames = recentByHero
+    .filter(h => h.games >= TOP_HERO_MIN_GAMES)
+    .slice(0, TOP_HERO_COUNT)
+    .map(h => h.hero_name);
+  renderPatches();
+}
+
+function setCompareStatus(msg) {
+  document.getElementById('compareStatus').textContent = msg;
+}
+
+async function compareSearch() {
+  const val = document.getElementById('compareInput').value.trim();
+  if (!val) return;
+  document.getElementById('compareCandidates').innerHTML = '';
+  document.getElementById('compareMatches').innerHTML = '';
+  document.getElementById('compareResult').innerHTML = '';
+  setCompareStatus(`Resolving '${val}'...`);
+
+  try {
+    const data = await resolveQuery(val);
+    if (data.account_id != null) {
+      loadCompareMatches(data.account_id);
+    } else if (data.candidates) {
+      renderCompareCandidates(data.candidates);
+    }
+  } catch (e) {
+    setCompareStatus(e.message || 'Failed to resolve player. Is the server running?');
+  }
+}
+
+function renderCompareCandidates(candidates) {
+  setCompareStatus('Multiple profiles match — pick one:');
+  const el = document.getElementById('compareCandidates');
+  el.innerHTML = candidates.map(c => `
+    <div class="candidate" onclick="loadCompareMatches(${c.account_id})">
+      ${c.avatar ? `<img src="${c.avatar}">` : ''}
+      <span>${c.personaname ?? 'Unknown'} <span class="muted">(account_id=${c.account_id})</span></span>
+    </div>`).join('');
+}
+
+async function loadCompareMatches(accountId) {
+  compareAccountId = accountId;
+  document.getElementById('compareCandidates').innerHTML = '';
+  setCompareStatus(`Loading matches for account_id=${accountId}...`);
+  try {
+    const resp = await fetch(`/players/${accountId}/matches`);
+    const data = await resp.json();
+    renderCompareMatches(data.matches || []);
+    setCompareStatus(`Pick a match from account_id=${accountId} to compare against yours:`);
+  } catch (e) {
+    setCompareStatus('Failed to fetch that player\'s match history.');
+  }
+}
+
+function renderCompareMatches(matches) {
+  const el = document.getElementById('compareMatches');
+  if (!matches.length) {
+    el.innerHTML = `<span class="muted">No matches found for that player.</span>`;
+    return;
+  }
+  el.innerHTML = matches.slice(0, 15).map(m => {
+    const outcome = OUTCOME_LABELS[m.player_match_outcome] ?? '?';
+    const outcomeClass = outcome === 'win' ? 'outcome-win' : (outcome === 'loss' ? 'outcome-loss' : '');
+    return `<div class="mini-match" onclick="selectCompareMatch(${m.match_id})">
+      <span>${m.hero_name} <span class="muted">(match ${m.match_id})</span></span>
+      <span class="${outcomeClass}">${outcome}</span>
+    </div>`;
+  }).join('');
+}
+
+async function selectCompareMatch(matchId) {
+  compareMatchId = matchId;
+  if (!currentMatchId) {
+    setCompareStatus('Pick one of your own matches above (in Match History) first, then a match here.');
+    return;
+  }
+
+  const el = document.getElementById('compareResult');
+  el.innerHTML = `<span class="muted">Loading comparison...</span>`;
+  try {
+    const resp = await fetch(`/compare/build?a_match_id=${currentMatchId}&a_account_id=${currentAccountId}&b_match_id=${compareMatchId}&b_account_id=${compareAccountId}`);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      el.innerHTML = `<span class="muted">${err.detail || 'Could not load comparison.'}</span>`;
+      return;
+    }
+    const data = await resp.json();
+    renderComparison(data);
+    setCompareStatus('');
+  } catch (e) {
+    el.innerHTML = `<span class="muted">Failed to fetch comparison.</span>`;
+  }
+}
+
+function renderComparison(data) {
+  const el = document.getElementById('compareResult');
+  el.innerHTML = `
+    <div id="comparePerf"></div>
+    <div class="compare-columns">
+      <div><h3>You</h3><div id="compareColA"></div></div>
+      <div><h3>Them</h3><div id="compareColB"></div></div>
+    </div>`;
+  renderMatchTimeline(document.getElementById('compareColA'), data.a, null);
+  renderMatchTimeline(document.getElementById('compareColB'), data.b, null);
+  loadPerformanceComparison(data);
+}
+
+async function loadPerformanceComparison(buildData) {
+  const el = document.getElementById('comparePerf');
+  el.innerHTML = `<span class="muted">Loading performance curves...</span>`;
+  try {
+    const url = `/compare/performance?a_account_id=${currentAccountId}&a_hero_id=${buildData.a.hero_id}&b_account_id=${compareAccountId}&b_hero_id=${buildData.b.hero_id}`;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      el.innerHTML = `<span class="muted">Could not load performance curves.</span>`;
+      return;
+    }
+    const data = await resp.json();
+    renderPerformanceComparison(data);
+  } catch (e) {
+    el.innerHTML = `<span class="muted">Failed to fetch performance curves.</span>`;
+  }
+}
+
+function lineChartSvg(curveA, curveB, valueKey) {
+  const width = 560, height = 160, pad = 30;
+  const plotW = width - pad * 2, plotH = height - pad * 2;
+  const maxVal = Math.max(1, ...curveA.map(d => d[valueKey]), ...curveB.map(d => d[valueKey]));
+
+  const toPoints = (curve) => curve.map(d => {
+    const x = pad + (d.game_time / 100) * plotW;
+    const y = pad + plotH - (d[valueKey] / maxVal) * plotH;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+
+  const gridLines = [0, 0.25, 0.5, 0.75, 1].map(f => {
+    const y = pad + plotH - f * plotH;
+    return `<line x1="${pad}" y1="${y}" x2="${width - pad}" y2="${y}" stroke="var(--border)" stroke-width="1"/>
+      <text x="${pad - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="var(--muted)">${Math.round(f * maxVal)}</text>`;
+  }).join('');
+
+  const xLabels = [0, 25, 50, 75, 100].map(pct => {
+    const x = pad + (pct / 100) * plotW;
+    return `<text x="${x}" y="${height - 8}" text-anchor="middle" font-size="9" fill="var(--muted)">${pct}%</text>`;
+  }).join('');
+
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" style="overflow:visible;">
+    ${gridLines}
+    ${xLabels}
+    <polyline points="${toPoints(curveA)}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    <polyline points="${toPoints(curveB)}" fill="none" stroke="var(--accent2)" stroke-width="2"/>
+  </svg>`;
+}
+
+function renderPerformanceComparison(data) {
+  const el = document.getElementById('comparePerf');
+  if (!data.a.curve.length || !data.b.curve.length) {
+    el.innerHTML = `<span class="muted">Not enough recent matches on these heroes to build a performance curve.</span>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="section-label">Net Worth by Game Stage (last 30 days on hero)</div>
+    <div class="chart-legend">
+      <span><span class="dot dot-a"></span>You — ${data.a.hero_name}</span>
+      <span><span class="dot dot-b"></span>Them — ${data.b.hero_name}</span>
+    </div>
+    ${lineChartSvg(data.a.curve, data.b.curve, 'net_worth_avg')}`;
+}
+
+async function loadHeroList() {
+  try {
+    const resp = await fetch('/heroes');
+    const data = await resp.json();
+    const select = document.getElementById('heroSelect');
+    for (const h of data.heroes) {
+      const opt = document.createElement('option');
+      opt.value = h.hero_id;
+      opt.textContent = h.hero_name;
+      select.appendChild(opt);
+    }
+    select.addEventListener('change', () => {
+      if (select.value) loadHeroWinrate(select.value);
+    });
+  } catch (e) {
+    // hero dropdown just stays empty; other panels still work
+  }
+}
+
+function selectHeroWinrate(heroId) {
+  document.getElementById('heroSelect').value = heroId;
+  loadHeroWinrate(heroId);
+  document.getElementById('heroWinrateContent').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function loadHeroWinrate(heroId) {
+  const el = document.getElementById('heroWinrateContent');
+  el.innerHTML = `<span class="muted">Loading...</span>`;
+  try {
+    const resp = await fetch(`/heroes/${heroId}/winrate`);
+    if (!resp.ok) {
+      el.innerHTML = `<span class="muted">Could not load win rate for this hero.</span>`;
+      return;
+    }
+    const data = await resp.json();
+    renderHeroWinrate(data);
+  } catch (e) {
+    el.innerHTML = `<span class="muted">Failed to fetch hero win rate.</span>`;
+  }
+}
+
+function renderHeroWinrate(data) {
+  const el = document.getElementById('heroWinrateContent');
+  const rankRows = data.by_rank.map(r => `<tr>
+    <td>${r.rank_label}</td>
+    <td>${r.matches.toLocaleString()}</td>
+    <td class="rank-bar-cell"><div class="rank-bar" style="width:${r.win_rate}%;"></div><span>${r.win_rate}%</span></td>
+  </tr>`).join('');
+
+  el.innerHTML = `
+    <div class="stat-grid" style="grid-template-columns: repeat(2, 1fr); margin-bottom:16px;">
+      ${statTile('Overall Win Rate', data.overall.win_rate != null ? data.overall.win_rate + '%' : '-')}
+      ${statTile('Unranked Win Rate', data.unranked && data.unranked.win_rate != null ? data.unranked.win_rate + '%' : '-')}
+    </div>
+    <table>
+      <thead><tr><th>Rank</th><th>Matches</th><th>Win Rate</th></tr></thead>
+      <tbody>${rankRows}</tbody>
+    </table>`;
+}
+
+function formatPatchDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+let currentPatches = [];
+
+async function loadPatches() {
+  const el = document.getElementById('patchesContent');
+  try {
+    const resp = await fetch('/patches');
+    const data = await resp.json();
+    currentPatches = data.patches || [];
+    renderPatches();
+  } catch (e) {
+    el.innerHTML = `<span class="muted">Failed to fetch patch notes.</span>`;
+  }
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function heroesMentioned(content, names) {
+  if (!names.length) return [];
+  const text = (content || '').replace(/<[^>]+>/g, ' ');
+  return names.filter(name => new RegExp(`\\b${escapeRegExp(name)}\\b`, 'i').test(text));
+}
+
+function renderPatches() {
+  const el = document.getElementById('patchesContent');
+  if (!currentPatches.length) {
+    el.innerHTML = `<span class="muted">No patch notes found.</span>`;
+    return;
+  }
+
+  const note = document.getElementById('patchHighlightNote');
+  if (note) {
+    note.textContent = topHeroNames.length
+      ? `Highlighting changes to your recently-played heroes: ${topHeroNames.join(', ')}.`
+      : '';
+  }
+
+  const annotated = currentPatches.map(p => ({ p, matched: heroesMentioned(p.content, topHeroNames) }));
+  annotated.sort((a, b) => (a.matched.length > 0 ? 0 : 1) - (b.matched.length > 0 ? 0 : 1));
+
+  el.innerHTML = annotated.map(({ p, matched }, i) => `
+    <details class="patch-entry${matched.length ? ' patch-highlighted' : ''}"${i === 0 ? ' open' : ''}>
+      <summary class="patch-summary">
+        <span>
+          <span class="patch-marker"></span><span class="patch-source">${p.source}</span><span class="patch-title">${p.title}</span>
+          ${matched.map(h => `<span class="patch-hero-tag">${h}</span>`).join('')}
+        </span>
+        <span class="patch-date">${formatPatchDate(p.pub_date)}</span>
+      </summary>
+      <div class="patch-body">${p.content || ''}</div>
+    </details>`).join('');
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  loadHeroList();
+  loadPatches();
   const saved = localStorage.getItem('deadtracker_account_id');
   if (saved) startTracking(saved);
 });

@@ -86,6 +86,15 @@ def fetch_heroes() -> dict[int, str]:
     return {hero["id"]: hero["name"] for hero in resp.json()}
 
 
+def fetch_released_hero_ids() -> list[int]:
+    """Hero IDs that are actually live in the game right now - excludes
+    heroes still in development/disabled (e.g. unreleased heroes datamined
+    into the API before their official release)."""
+    resp = requests.get(f"{BASE_URL}/v1/assets/heroes")
+    resp.raise_for_status()
+    return [hero["id"] for hero in resp.json() if not hero.get("disabled") and not hero.get("in_development")]
+
+
 def fetch_ranks() -> dict[int, str]:
     resp = requests.get(f"{BASE_URL}/v1/assets/ranks")
     resp.raise_for_status()
@@ -100,6 +109,40 @@ def fetch_items() -> dict[int, dict]:
 
 def fetch_match_metadata(match_id: int) -> dict:
     resp = requests.get(f"{BASE_URL}/v1/matches/{match_id}/metadata")
+    resp.raise_for_status()
+    return resp.json()
+
+
+def fetch_patches() -> list[dict]:
+    """Deadlock's patch notes, aggregated by deadlock-api.com from Steam's news
+    feed for the game (plus their forum). Newest first."""
+    resp = requests.get(f"{BASE_URL}/v2/patches")
+    resp.raise_for_status()
+    return resp.json()
+
+
+def fetch_hero_rank_stats() -> list[dict]:
+    """Community-wide win/loss counts per hero, bucketed by average match badge
+    (rank tier). One row per (hero_id, bucket); bucket=0 means unranked, other
+    buckets are badge values (tier*10 + subtier, same encoding as ranked_display_badge).
+    Uses the API's defaults: last 30 days, normal game mode, ranked+unranked matches."""
+    resp = requests.get(
+        f"{BASE_URL}/v1/analytics/hero-stats",
+        params={"bucket": "avg_badge"},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def fetch_performance_curve(account_id: int, hero_id: int) -> list[dict]:
+    """Average net worth / K/D/A over relative game-time (0-100%, in buckets of 10),
+    aggregated across the account's last 30 days of matches on the given hero.
+    NOTE: pass one account_id at a time - deadlock-api averages multiple account_ids
+    together into a single combined curve rather than returning one curve per player."""
+    resp = requests.get(
+        f"{BASE_URL}/v1/analytics/player-performance-curve",
+        params={"account_ids": account_id, "hero_ids": hero_id, "resolution": 10},
+    )
     resp.raise_for_status()
     return resp.json()
 

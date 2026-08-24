@@ -35,24 +35,27 @@ def _summarize(matches: list[dict]) -> dict:
     }
 
 
+def _hero_breakdown(matches: list[dict]) -> list[dict]:
+    by_hero: dict[str, list[dict]] = {}
+    for m in matches:
+        by_hero.setdefault(m["hero_name"], []).append(m)
+
+    return [
+        {"hero_id": hero_matches[0]["hero_id"], "hero_name": name, **_summarize(hero_matches)}
+        for name, hero_matches in sorted(by_hero.items(), key=lambda kv: len(kv[1]), reverse=True)
+    ]
+
+
 def compute_stats(matches: list[dict], recent_n: int = 20) -> dict:
     """`matches` must already be enriched with `hero_name` and sorted newest-first
     (both true of what DeadTracker.py's /players/{account_id}/matches returns)."""
     scored = [m for m in matches if m["player_match_outcome"] in (WIN, LOSS)]
     recent = scored[:recent_n]
 
-    by_hero: dict[str, list[dict]] = {}
-    for m in scored:
-        by_hero.setdefault(m["hero_name"], []).append(m)
-
-    hero_breakdown = [
-        {"hero_name": name, **_summarize(hero_matches)}
-        for name, hero_matches in sorted(by_hero.items(), key=lambda kv: len(kv[1]), reverse=True)
-    ]
-
     return {
         "all_time": _summarize(scored),
         "recent": _summarize(recent),
         "recent_n": recent_n,
-        "by_hero": hero_breakdown,
+        "by_hero": _hero_breakdown(scored),
+        "recent_by_hero": _hero_breakdown(recent),
     }
