@@ -27,7 +27,10 @@ import cache
 from fetch_match_history import (
     extract_vanity_name,
     fetch_active_matches,
+    fetch_badge_distribution,
+    fetch_hero_counter_stats,
     fetch_hero_rank_stats,
+    fetch_hero_trend,
     fetch_heroes,
     fetch_items,
     fetch_match_history,
@@ -36,6 +39,7 @@ from fetch_match_history import (
     fetch_performance_curve,
     fetch_ranks,
     fetch_released_hero_ids,
+    format_match_mode,
     format_rank,
     parse_account_id_input,
     search_steam_profiles,
@@ -111,6 +115,30 @@ def get_patches(conn) -> list[dict]:
         patches = fetch_patches()
         cache.set_cached_patches(conn, patches)
     return patches
+
+
+def get_hero_trend(conn) -> list[dict]:
+    trend = cache.get_cached_hero_trend(conn)
+    if trend is None:
+        trend = fetch_hero_trend()
+        cache.set_cached_hero_trend(conn, trend)
+    return trend
+
+
+def get_hero_counter_stats(conn) -> list[dict]:
+    stats = cache.get_cached_hero_counter_stats(conn)
+    if stats is None:
+        stats = fetch_hero_counter_stats()
+        cache.set_cached_hero_counter_stats(conn, stats)
+    return stats
+
+
+def get_badge_distribution(conn) -> list[dict]:
+    distribution = cache.get_cached_badge_distribution(conn)
+    if distribution is None:
+        distribution = fetch_badge_distribution()
+        cache.set_cached_badge_distribution(conn, distribution)
+    return distribution
 
 
 def refresh_tracked_accounts() -> None:
@@ -282,6 +310,102 @@ def get_hero_winrate(hero_id: int):
     }
 
 
+@app.get("/heroes/{hero_id}/trend")
+def get_hero_trend_route(hero_id: int):
+    conn = cache.get_conn()
+    cache.init_db(conn)
+    try:
+        heroes = get_heroes(conn)
+        trend = get_hero_trend(conn)
+    finally:
+        conn.close()
+
+    rows = sorted((r for r in trend if r["hero_id"] == hero_id and r["matches"] > 0), key=lambda r: r["bucket"])
+    weekly = [
+        {
+            "week_start_unix": row["bucket"],
+            "matches": row["matches"],
+            "win_rate": round(row["wins"] / row["matches"] * 100, 1) if row["matches"] else None,
+        }
+        for row in rows
+    ]
+    return {"hero_id": hero_id, "hero_name": heroes.get(hero_id, f"hero_id {hero_id}"), "weekly": weekly}
+
+
+MIN_MATCHUP_MATCHES = 200
+
+
+@app.get("/heroes/{hero_id}/matchups")
+def get_hero_matchups(hero_id: int, limit: int = Query(5, ge=1, le=20)):
+    conn = cache.get_conn()
+    cache.init_db(conn)
+    try:
+        heroes = get_heroes(conn)
+        stats = get_hero_counter_stats(conn)
+    finally:
+        conn.close()
+
+    rows = [
+        {
+            "enemy_hero_id": r["enemy_hero_id"],
+            "enemy_hero_name": heroes.get(r["enemy_hero_id"], f"hero_id {r['enemy_hero_id']}"),
+            "matches": r["matches_played"],
+            "win_rate": round(r["wins"] / r["matches_played"] * 100, 1) if r["matches_played"] else None,
+        }
+        for r in stats
+        if r["hero_id"] == hero_id and r["matches_played"] >= MIN_MATCHUP_MATCHES
+    ]
+
+    return {
+        "hero_id": hero_id,
+        "hero_name": heroes.get(hero_id, f"hero_id {hero_id}"),
+        "best_matchups": sorted(rows, key=lambda r: r["win_rate"], reverse=True)[:limit],
+        "worst_matchups": sorted(rows, key=lambda r: r["win_rate"])[:limit],
+    }
+
+
+@app.get("/players/{account_id}/percentile")
+def get_player_percentile(account_id: int):
+    conn = cache.get_conn()
+    cache.init_db(conn)
+    try:
+        matches = get_match_history(conn, account_id, refresh=False)
+        ranks = get_ranks(conn)
+        distribution = get_badge_distribution(conn)
+    finally:
+        conn.close()
+
+    current_badge = next((m.get("ranked_display_badge") for m in matches if m.get("ranked_display_badge")), None)
+    if current_badge is None:
+        raise HTTPException(status_code=404, detail="No ranked matches found for this account")
+
+    total_players = sum(row["unique_players"] for row in distribution)
+    players_below = sum(row["unique_players"] for row in distribution if row["badge_level"] < current_badge)
+    percentile_better_than = round(players_below / total_players * 100, 1) if total_players else None
+
+    tier_totals: dict[int, int] = {}
+    for row in distribution:
+        tier = row["badge_level"] // 10
+        tier_totals[tier] = tier_totals.get(tier, 0) + row["unique_players"]
+
+    by_tier = sorted(
+        (
+            {"tier": tier, "rank_name": ranks.get(tier, f"tier {tier}"), "unique_players": count}
+            for tier, count in tier_totals.items()
+        ),
+        key=lambda r: r["tier"],
+    )
+
+    return {
+        "account_id": account_id,
+        "current_badge": current_badge,
+        "rank_label": format_rank(current_badge, ranks),
+        "player_tier": current_badge // 10,
+        "percentile_better_than": percentile_better_than,
+        "by_tier": by_tier,
+    }
+
+
 def get_match_history(conn, account_id: int, refresh: bool) -> list[dict]:
     matches = None if refresh else cache.get_cached_match_history(conn, account_id)
     if matches is None:
@@ -299,6 +423,8 @@ def get_enriched_matches(conn, account_id: int, refresh: bool) -> list[dict]:
             **m,
             "hero_name": heroes.get(m["hero_id"], f"hero_id {m['hero_id']}"),
             "rank_label": format_rank(m.get("ranked_display_badge"), ranks),
+            "match_mode_label": format_match_mode(m.get("match_mode")),
+            "is_ranked": m.get("match_mode") == 4,
         }
         for m in matches
     ]
@@ -331,39 +457,59 @@ def get_stats(
     finally:
         conn.close()
 
-    return {"account_id": account_id, **compute_stats(enriched, recent_n=recent_n)}
+    ranked = [m for m in enriched if m["is_ranked"]]
+    standard = [m for m in enriched if not m["is_ranked"]]
+    return {
+        "account_id": account_id,
+        "ranked": compute_stats(ranked, recent_n=recent_n),
+        "standard": compute_stats(standard, recent_n=recent_n),
+    }
+
+
+def get_live_status_batch(conn, account_ids: list[int], refresh: bool) -> dict[int, dict]:
+    heroes = get_heroes(conn)
+    results: dict[int, dict] = {}
+    needs_fetch = []
+    for account_id in account_ids:
+        status = None if refresh else cache.get_cached_live_status(conn, account_id)
+        if status is not None:
+            results[account_id] = status
+        else:
+            needs_fetch.append(account_id)
+
+    if needs_fetch:
+        active = fetch_active_matches(needs_fetch)
+        for account_id in needs_fetch:
+            match = next(
+                (m for m in active if any(p.get("account_id") == account_id for p in m.get("players", []))), None
+            )
+            player = None
+            if match is not None:
+                player = next((p for p in match.get("players", []) if p.get("account_id") == account_id), None)
+
+            if match is None or player is None:
+                status = {"live": False, "match": None}
+            else:
+                hero_id = player.get("hero_id")
+                status = {
+                    "live": True,
+                    "match": {
+                        "match_id": match.get("match_id"),
+                        "start_time": match.get("start_time"),
+                        "duration_s": match.get("duration_s"),
+                        "hero_name": heroes.get(hero_id, f"hero_id {hero_id}") if hero_id is not None else None,
+                        "team": player.get("team"),
+                        "spectators": match.get("spectators"),
+                    },
+                }
+            cache.set_cached_live_status(conn, account_id, status)
+            results[account_id] = status
+
+    return results
 
 
 def get_live_status(conn, account_id: int, refresh: bool) -> dict:
-    status = None if refresh else cache.get_cached_live_status(conn, account_id)
-    if status is not None:
-        return status
-
-    heroes = get_heroes(conn)
-    active = fetch_active_matches([account_id])
-    match = active[0] if active else None
-    player = None
-    if match is not None:
-        player = next((p for p in match.get("players", []) if p.get("account_id") == account_id), None)
-
-    if match is None or player is None:
-        status = {"live": False, "match": None}
-    else:
-        hero_id = player.get("hero_id")
-        status = {
-            "live": True,
-            "match": {
-                "match_id": match.get("match_id"),
-                "start_time": match.get("start_time"),
-                "duration_s": match.get("duration_s"),
-                "hero_name": heroes.get(hero_id, f"hero_id {hero_id}") if hero_id is not None else None,
-                "team": player.get("team"),
-                "spectators": match.get("spectators"),
-            },
-        }
-
-    cache.set_cached_live_status(conn, account_id, status)
-    return status
+    return get_live_status_batch(conn, [account_id], refresh)[account_id]
 
 
 def build_player_match_timeline(conn, match_id: int, account_id: int) -> dict:
@@ -385,6 +531,7 @@ def build_player_match_timeline(conn, match_id: int, account_id: int) -> dict:
             "game_time_s": entry["game_time_s"],
             "item_id": entry["item_id"],
             "item_name": items.get(entry["item_id"], {}).get("name", f"item_id {entry['item_id']}"),
+            "item_image": items.get(entry["item_id"], {}).get("image"),
             "sold_time_s": entry["sold_time_s"] or None,
         }
         for entry in entries
@@ -410,12 +557,43 @@ def build_player_match_timeline(conn, match_id: int, account_id: int) -> dict:
             }
         )
 
+    stats_series = [
+        {
+            "time_s": s["time_stamp_s"],
+            "net_worth": s["net_worth"],
+            "kills": s["kills"],
+            "deaths": s["deaths"],
+            "assists": s["assists"],
+        }
+        for s in sorted(player.get("stats", []), key=lambda s: s["time_stamp_s"])
+    ]
+
+    all_players = metadata.get("match_info", {}).get("players", [])
+    player_team = player.get("team")
+    timestamps = sorted({s["time_stamp_s"] for p in all_players for s in p.get("stats", [])})
+    team_net_worth = []
+    for t in timestamps:
+        team_sum = 0
+        enemy_sum = 0
+        for p in all_players:
+            sample = next((s for s in p.get("stats", []) if s["time_stamp_s"] == t), None)
+            if sample is None:
+                continue
+            if p.get("team") == player_team:
+                team_sum += sample.get("net_worth", 0)
+            else:
+                enemy_sum += sample.get("net_worth", 0)
+        team_net_worth.append({"time_s": t, "team_net_worth": team_sum, "enemy_net_worth": enemy_sum})
+
     hero_id = player.get("hero_id")
     return {
         "match_id": match_id,
         "account_id": account_id,
         "hero_id": hero_id,
         "hero_name": heroes.get(hero_id, f"hero_id {hero_id}"),
+        "match_duration_s": metadata.get("match_info", {}).get("duration_s"),
+        "stats": stats_series,
+        "team_net_worth": team_net_worth,
         "purchases": purchases,
         "ability_upgrades": ability_upgrades,
     }
@@ -477,3 +655,25 @@ def get_live(account_id: int, refresh: bool = Query(False, description="Bypass c
         conn.close()
 
     return {"account_id": account_id, **status}
+
+
+@app.get("/players/live-batch")
+def get_live_batch(
+    account_ids: str = Query(..., description="Comma-separated account_ids"),
+    refresh: bool = Query(False, description="Bypass cache and refetch from deadlock-api.com"),
+):
+    try:
+        ids = [int(part) for part in account_ids.split(",") if part.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="account_ids must be a comma-separated list of integers")
+    if not ids:
+        raise HTTPException(status_code=400, detail="No account_ids provided")
+
+    conn = cache.get_conn()
+    cache.init_db(conn)
+    try:
+        statuses = get_live_status_batch(conn, ids, refresh)
+    finally:
+        conn.close()
+
+    return {"results": [{"account_id": account_id, **statuses[account_id]} for account_id in ids]}

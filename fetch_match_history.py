@@ -104,7 +104,10 @@ def fetch_ranks() -> dict[int, str]:
 def fetch_items() -> dict[int, dict]:
     resp = requests.get(f"{BASE_URL}/v1/assets/items")
     resp.raise_for_status()
-    return {item["id"]: {"name": item["name"], "type": item.get("type")} for item in resp.json()}
+    return {
+        item["id"]: {"name": item["name"], "type": item.get("type"), "image": item.get("shop_image")}
+        for item in resp.json()
+    }
 
 
 def fetch_match_metadata(match_id: int) -> dict:
@@ -134,6 +137,36 @@ def fetch_hero_rank_stats() -> list[dict]:
     return resp.json()
 
 
+def fetch_hero_trend() -> list[dict]:
+    """Community-wide win/loss counts per hero, bucketed by week. One row per
+    (hero_id, bucket); bucket is a Unix timestamp for the start of that week."""
+    resp = requests.get(
+        f"{BASE_URL}/v1/analytics/hero-stats",
+        params={"bucket": "start_time_week"},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def fetch_hero_counter_stats() -> list[dict]:
+    """Community-wide head-to-head win/loss counts for every hero_id vs
+    enemy_hero_id pairing (both heroes present in the same match, opposing
+    teams)."""
+    resp = requests.get(f"{BASE_URL}/v1/analytics/hero-counter-stats")
+    resp.raise_for_status()
+    return resp.json()
+
+
+def fetch_badge_distribution() -> list[dict]:
+    """Real player counts per rank badge - {badge_level, total_matches, unique_players}
+    for every rank tier/subtier. Used to compute a genuine rank percentile
+    (deadlock-api's scoreboard `rank` field is not usable for this - see
+    project memory for why)."""
+    resp = requests.get(f"{BASE_URL}/v1/analytics/badge-distribution")
+    resp.raise_for_status()
+    return resp.json()
+
+
 def fetch_performance_curve(account_id: int, hero_id: int) -> list[dict]:
     """Average net worth / K/D/A over relative game-time (0-100%, in buckets of 10),
     aggregated across the account's last 30 days of matches on the given hero.
@@ -157,6 +190,23 @@ def fetch_active_matches(account_ids: list[int]) -> list[dict]:
 
 
 SUBTIER_NUMERALS = {0: "", 1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI"}
+
+# Order matches deadlock-api's ActiveMatchMode enum (index = raw match_mode int).
+MATCH_MODE_LABELS = {
+    0: "Invalid",
+    1: "Unranked",
+    2: "PrivateLobby",
+    3: "CoopBot",
+    4: "Ranked",
+    5: "ServerTest",
+    6: "Tutorial",
+    7: "HeroLabs",
+    8: "NewPlayerPlacement",
+}
+
+
+def format_match_mode(match_mode: int | None) -> str:
+    return MATCH_MODE_LABELS.get(match_mode, f"mode {match_mode}")
 
 
 def format_rank(badge: int | None, ranks_by_tier: dict[int, str]) -> str:

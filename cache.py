@@ -22,6 +22,9 @@ MATCH_METADATA_TTL_S = 24 * 60 * 60  # finished matches never change; long TTL j
 PERFORMANCE_CURVE_TTL_S = 30 * 60  # aggregated over the player's last 30 days of matches; doesn't shift fast
 HERO_RANK_STATS_TTL_S = 60 * 60  # community-wide meta stats; doesn't shift fast
 PATCHES_TTL_S = 15 * 60  # refreshed proactively by the background sweep too; keep this reasonably short
+BADGE_DISTRIBUTION_TTL_S = 60 * 60  # community-wide meta stats; doesn't shift fast
+HERO_TREND_TTL_S = 60 * 60  # community-wide meta stats; doesn't shift fast
+HERO_COUNTER_STATS_TTL_S = 60 * 60  # community-wide meta stats; doesn't shift fast
 
 
 def get_conn() -> sqlite3.Connection:
@@ -48,6 +51,10 @@ def init_db(conn: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS live_status (account_id INTEGER PRIMARY KEY, data TEXT NOT NULL)"
     )
     conn.execute("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, type TEXT)")
+    try:
+        conn.execute("ALTER TABLE items ADD COLUMN image TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists from a previous run
     conn.execute(
         "CREATE TABLE IF NOT EXISTS match_metadata (match_id INTEGER PRIMARY KEY, data TEXT NOT NULL)"
     )
@@ -56,15 +63,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         "account_id INTEGER NOT NULL, hero_id INTEGER NOT NULL, data TEXT NOT NULL, "
         "PRIMARY KEY (account_id, hero_id))"
     )
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS hero_rank_stats (id INTEGER PRIMARY KEY CHECK (id = 0), data TEXT NOT NULL)"
-    )
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS patches (id INTEGER PRIMARY KEY CHECK (id = 0), data TEXT NOT NULL)"
-    )
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS released_heroes (id INTEGER PRIMARY KEY CHECK (id = 0), data TEXT NOT NULL)"
-    )
+    conn.execute("CREATE TABLE IF NOT EXISTS blob_cache (key TEXT PRIMARY KEY, data TEXT NOT NULL)")
     conn.commit()
 
 
@@ -165,15 +164,15 @@ def set_cached_live_status(conn: sqlite3.Connection, account_id: int, status: di
 def get_cached_items(conn: sqlite3.Connection) -> dict[int, dict] | None:
     if not _is_fresh(conn, "items", ITEMS_TTL_S):
         return None
-    rows = conn.execute("SELECT id, name, type FROM items").fetchall()
-    return {row["id"]: {"name": row["name"], "type": row["type"]} for row in rows}
+    rows = conn.execute("SELECT id, name, type, image FROM items").fetchall()
+    return {row["id"]: {"name": row["name"], "type": row["type"], "image": row["image"]} for row in rows}
 
 
 def set_cached_items(conn: sqlite3.Connection, items: dict[int, dict]) -> None:
     conn.execute("DELETE FROM items")
     conn.executemany(
-        "INSERT INTO items (id, name, type) VALUES (?, ?, ?)",
-        [(item_id, info["name"], info["type"]) for item_id, info in items.items()],
+        "INSERT INTO items (id, name, type, image) VALUES (?, ?, ?, ?)",
+        [(item_id, info["name"], info["type"], info.get("image")) for item_id, info in items.items()],
     )
     _touch(conn, "items")
     conn.commit()
@@ -217,52 +216,65 @@ def set_cached_performance_curve(conn: sqlite3.Connection, account_id: int, hero
     conn.commit()
 
 
-def get_cached_hero_rank_stats(conn: sqlite3.Connection) -> list[dict] | None:
-    if not _is_fresh(conn, "hero_rank_stats", HERO_RANK_STATS_TTL_S):
+def get_cached_blob(conn: sqlite3.Connection, key: str, ttl_s: float):
+    if not _is_fresh(conn, key, ttl_s):
         return None
-    row = conn.execute("SELECT data FROM hero_rank_stats WHERE id = 0").fetchone()
+    row = conn.execute("SELECT data FROM blob_cache WHERE key = ?", (key,)).fetchone()
     return json.loads(row["data"]) if row else None
+
+
+def set_cached_blob(conn: sqlite3.Connection, key: str, data) -> None:
+    conn.execute(
+        "INSERT INTO blob_cache (key, data) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET data = excluded.data",
+        (key, json.dumps(data)),
+    )
+    _touch(conn, key)
+    conn.commit()
+
+
+def get_cached_hero_rank_stats(conn: sqlite3.Connection) -> list[dict] | None:
+    return get_cached_blob(conn, "hero_rank_stats", HERO_RANK_STATS_TTL_S)
 
 
 def set_cached_hero_rank_stats(conn: sqlite3.Connection, stats: list[dict]) -> None:
-    conn.execute(
-        "INSERT INTO hero_rank_stats (id, data) VALUES (0, ?) "
-        "ON CONFLICT(id) DO UPDATE SET data = excluded.data",
-        (json.dumps(stats),),
-    )
-    _touch(conn, "hero_rank_stats")
-    conn.commit()
+    set_cached_blob(conn, "hero_rank_stats", stats)
 
 
 def get_cached_released_hero_ids(conn: sqlite3.Connection) -> list[int] | None:
-    if not _is_fresh(conn, "released_heroes", HEROES_TTL_S):
-        return None
-    row = conn.execute("SELECT data FROM released_heroes WHERE id = 0").fetchone()
-    return json.loads(row["data"]) if row else None
+    return get_cached_blob(conn, "released_heroes", HEROES_TTL_S)
 
 
 def set_cached_released_hero_ids(conn: sqlite3.Connection, hero_ids: list[int]) -> None:
-    conn.execute(
-        "INSERT INTO released_heroes (id, data) VALUES (0, ?) "
-        "ON CONFLICT(id) DO UPDATE SET data = excluded.data",
-        (json.dumps(hero_ids),),
-    )
-    _touch(conn, "released_heroes")
-    conn.commit()
+    set_cached_blob(conn, "released_heroes", hero_ids)
 
 
 def get_cached_patches(conn: sqlite3.Connection) -> list[dict] | None:
-    if not _is_fresh(conn, "patches", PATCHES_TTL_S):
-        return None
-    row = conn.execute("SELECT data FROM patches WHERE id = 0").fetchone()
-    return json.loads(row["data"]) if row else None
+    return get_cached_blob(conn, "patches", PATCHES_TTL_S)
 
 
 def set_cached_patches(conn: sqlite3.Connection, patches: list[dict]) -> None:
-    conn.execute(
-        "INSERT INTO patches (id, data) VALUES (0, ?) "
-        "ON CONFLICT(id) DO UPDATE SET data = excluded.data",
-        (json.dumps(patches),),
-    )
-    _touch(conn, "patches")
-    conn.commit()
+    set_cached_blob(conn, "patches", patches)
+
+
+def get_cached_badge_distribution(conn: sqlite3.Connection) -> list[dict] | None:
+    return get_cached_blob(conn, "badge_distribution", BADGE_DISTRIBUTION_TTL_S)
+
+
+def set_cached_badge_distribution(conn: sqlite3.Connection, distribution: list[dict]) -> None:
+    set_cached_blob(conn, "badge_distribution", distribution)
+
+
+def get_cached_hero_trend(conn: sqlite3.Connection) -> list[dict] | None:
+    return get_cached_blob(conn, "hero_trend", HERO_TREND_TTL_S)
+
+
+def set_cached_hero_trend(conn: sqlite3.Connection, trend: list[dict]) -> None:
+    set_cached_blob(conn, "hero_trend", trend)
+
+
+def get_cached_hero_counter_stats(conn: sqlite3.Connection) -> list[dict] | None:
+    return get_cached_blob(conn, "hero_counter_stats", HERO_COUNTER_STATS_TTL_S)
+
+
+def set_cached_hero_counter_stats(conn: sqlite3.Connection, stats: list[dict]) -> None:
+    set_cached_blob(conn, "hero_counter_stats", stats)

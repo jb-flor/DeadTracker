@@ -81,8 +81,6 @@
   .stat-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
   tr.match-row { cursor: pointer; }
   tr.match-row:hover { background: var(--border); }
-  .timeline-item { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
-  .timeline-item .time { color: var(--muted); font-variant-numeric: tabular-nums; width: 60px; flex-shrink: 0; }
   .section-label { margin: 14px 0 4px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
   .section-label:first-child { margin-top: 0; }
   .compare-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
@@ -122,9 +120,39 @@
   .patch-source { display: inline-block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; margin-right: 8px; }
   .patch-entry.patch-highlighted { background: rgba(124, 156, 255, 0.08); border-left: 3px solid var(--accent); padding-left: 8px; margin-left: -11px; }
   .patch-hero-tag { display: inline-block; font-size: 0.7rem; font-weight: 600; color: var(--accent); background: rgba(124, 156, 255, 0.15); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
+  .code-row { display: flex; gap: 8px; align-items: stretch; margin: 8px 0; }
+  .code-row code { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-family: Consolas, Menlo, monospace; font-size: 0.85rem; overflow-x: auto; white-space: pre; }
+  .code-row button { flex-shrink: 0; }
+  .friend-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+  .friend-row:last-child { border-bottom: none; }
+  .friend-row .live-badge { font-size: 0.75rem; padding: 2px 8px; }
+  .friend-remove { background: none; border: 1px solid var(--border); color: var(--muted); font-size: 0.75rem; padding: 4px 8px; }
+  .friend-remove:hover { color: var(--loss); border-color: var(--loss); opacity: 1; }
+  .matchup-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 0.85rem; }
+  .matchup-name { width: 110px; flex-shrink: 0; }
+  .matchup-bar-track { flex: 1; height: 14px; background: var(--bg); border-radius: 3px; position: relative; overflow: hidden; }
+  .matchup-bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
+  .matchup-pct { width: 44px; text-align: right; flex-shrink: 0; color: var(--muted); font-size: 0.8rem; }
+  .chart-tooltip {
+    position: fixed;
+    pointer-events: none;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    color: var(--text);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+    z-index: 1000;
+    white-space: nowrap;
+    line-height: 1.4;
+  }
+  .chart-marker { cursor: pointer; }
+  .chart-marker:hover { filter: brightness(1.5); }
 </style>
 </head>
 <body>
+  <div id="chartTooltip" class="chart-tooltip" style="display:none;"></div>
   <h1>DeadTracker</h1>
   <div class="row">
     <input id="accountIdInput" type="text" placeholder="Steam profile URL, SteamID64, or name">
@@ -134,13 +162,54 @@
   <div id="candidates"></div>
 
   <div class="panel">
+    <h2>Get Complete Data</h2>
+    <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">DeadTracker relies on deadlock-api.com's passive data collection, which has small gaps in match history and live-match detection (a tracked player can occasionally show as offline while actually in a match). Their official fix is a lightweight local tool that contributes match IDs from your own Steam cache — not a Steam friend request.</div>
+    <details class="patch-entry">
+      <summary class="patch-summary">
+        <span><span class="patch-marker"></span><span class="patch-title">Install deadlock-api-ingest (Windows)</span></span>
+      </summary>
+      <div class="patch-body">
+        <p>Run this in PowerShell:</p>
+        <div class="code-row">
+          <code id="ingestCmd">irm https://raw.githubusercontent.com/deadlock-api/deadlock-api-ingest/master/install-windows.ps1 | iex</code>
+          <button id="ingestCopyBtn" onclick="copyIngestCommand()">Copy</button>
+        </div>
+        <p class="muted" style="font-size:0.85rem;">Privacy-focused: only match IDs (salts) are submitted — no personal information or credentials. Runs as a lightweight background service; no admin rights required.</p>
+        <p class="muted" style="font-size:0.85rem;">macOS, Linux, Docker, and manual-upload options are documented at <a href="https://deadlock-api.com/ingest-cache" target="_blank" rel="noopener">deadlock-api.com/ingest-cache</a>.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="panel">
     <h2>Live Status</h2>
     <div id="liveContent" class="muted">Enter an account_id above to start tracking.</div>
   </div>
 
   <div class="panel">
+    <h2>Friends</h2>
+    <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Track other players' live status alongside your own. Saved locally in this browser.</div>
+    <div class="row" style="margin-bottom:8px;">
+      <input id="friendInput" type="text" placeholder="Steam profile URL, SteamID64, or name">
+      <button onclick="addFriend()">Add</button>
+    </div>
+    <div id="friendStatus" class="muted" style="font-size:0.85rem; margin-bottom:8px;"></div>
+    <div id="friendCandidates"></div>
+    <div id="friendsList" class="muted">No friends added yet.</div>
+  </div>
+
+  <div class="panel">
     <h2>Stats</h2>
-    <div id="statsContent" class="muted">No data yet.</div>
+    <div id="percentileContent" class="muted"></div>
+    <details class="patch-entry" open>
+      <summary class="patch-summary"><span><span class="patch-marker"></span><span class="patch-title">Ranked</span></span><span class="patch-date" id="rankedStatsCount"></span></summary>
+      <div id="rankedWinLossTrend" class="muted"></div>
+      <div id="rankedStatsContent" class="muted">No data yet.</div>
+    </details>
+    <details class="patch-entry">
+      <summary class="patch-summary"><span><span class="patch-marker"></span><span class="patch-title">Standard</span></span><span class="patch-date" id="standardStatsCount"></span></summary>
+      <div id="standardWinLossTrend" class="muted"></div>
+      <div id="standardStatsContent" class="muted">No data yet.</div>
+    </details>
   </div>
 
   <div class="panel">
@@ -155,7 +224,14 @@
   <div class="panel">
     <h2>Match History</h2>
     <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Click a match to see its item build timeline.</div>
-    <div id="matchesContent" class="muted">No data yet.</div>
+    <details class="patch-entry" open>
+      <summary class="patch-summary"><span><span class="patch-marker"></span><span class="patch-title">Ranked</span></span><span class="patch-date" id="rankedMatchesCount"></span></summary>
+      <div id="rankedMatchesContent" class="muted">No data yet.</div>
+    </details>
+    <details class="patch-entry">
+      <summary class="patch-summary"><span><span class="patch-marker"></span><span class="patch-title">Standard</span></span><span class="patch-date" id="standardMatchesCount"></span></summary>
+      <div id="standardMatchesContent" class="muted">No data yet.</div>
+    </details>
   </div>
 
   <div class="panel">
@@ -242,6 +318,7 @@ function startTracking(accountId) {
   refreshLive();
   refreshMatches();
   refreshStats();
+  refreshPercentile();
   liveTimer = setInterval(refreshLive, LIVE_POLL_MS);
 }
 
@@ -284,9 +361,128 @@ async function refreshMatches() {
   try {
     const resp = await fetch(`/players/${currentAccountId}/matches`);
     const data = await resp.json();
-    renderMatches(data.matches);
+    const matches = data.matches || [];
+    const ranked = matches.filter(m => m.is_ranked);
+    const standard = matches.filter(m => !m.is_ranked);
+
+    document.getElementById('rankedMatchesCount').textContent = `${ranked.length} games`;
+    document.getElementById('standardMatchesCount').textContent = `${standard.length} games`;
+    renderMatches(document.getElementById('rankedMatchesContent'), ranked);
+    renderMatches(document.getElementById('standardMatchesContent'), standard);
+    renderWinLossTrend(document.getElementById('rankedWinLossTrend'), ranked);
+    renderWinLossTrend(document.getElementById('standardWinLossTrend'), standard);
+
+    topHeroNames = computeTopHeroNames(matches);
+    renderPatches();
   } catch (e) {
-    document.getElementById('matchesContent').innerHTML = `<span class="muted">Failed to fetch match history.</span>`;
+    document.getElementById('rankedMatchesContent').innerHTML = `<span class="muted">Failed to fetch match history.</span>`;
+    document.getElementById('standardMatchesContent').innerHTML = '';
+  }
+}
+
+function computeTopHeroNames(matches) {
+  const scored = matches.filter(m => m.player_match_outcome === 1 || m.player_match_outcome === 2).slice(0, 20);
+  const counts = new Map();
+  for (const m of scored) counts.set(m.hero_name, (counts.get(m.hero_name) || 0) + 1);
+  return [...counts.entries()]
+    .filter(([, count]) => count >= TOP_HERO_MIN_GAMES)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, TOP_HERO_COUNT)
+    .map(([name]) => name);
+}
+
+function winLossTrendChartSvg(chronological) {
+  const width = 560, height = 130, pad = 26;
+  const plotW = width - pad * 2, plotH = height - pad * 2;
+  const zeroY = pad + plotH / 2;
+
+  let running = 0;
+  const points = chronological.map(m => {
+    running += m.player_match_outcome === 1 ? 1 : -1;
+    return running;
+  });
+  const maxAbs = Math.max(1, ...points.map(Math.abs));
+  const n = points.length;
+  const coords = points.map((v, i) => [
+    pad + (n <= 1 ? 0 : (i / (n - 1)) * plotW),
+    zeroY - (v / maxAbs) * (plotH / 2),
+  ]);
+
+  const linePoints = coords.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  const dots = coords.map(([x, y], i) => {
+    const m = chronological[i];
+    const isWin = m.player_match_outcome === 1;
+    const date = new Date(m.start_time * 1000).toLocaleDateString();
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="${isWin ? 'var(--win)' : 'var(--loss)'}"><title>${date} — ${m.hero_name} — ${isWin ? 'win' : 'loss'}</title></circle>`;
+  }).join('');
+
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}">
+    <line x1="${pad}" y1="${zeroY}" x2="${width - pad}" y2="${zeroY}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3,3"/>
+    <polyline points="${linePoints}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    ${dots}
+  </svg>`;
+}
+
+function renderWinLossTrend(el, matches) {
+  const scored = (matches || []).filter(m => m.player_match_outcome === 1 || m.player_match_outcome === 2);
+  if (scored.length < 2) {
+    el.innerHTML = `<span class="muted">Not enough scored matches for a trend chart yet.</span>`;
+    return;
+  }
+  const chronological = [...scored].reverse();
+  el.innerHTML = `
+    <div class="section-label" style="margin-top:0;">Win/Loss Trend (oldest → newest, running net wins)</div>
+    ${winLossTrendChartSvg(chronological)}`;
+}
+
+function rankDistributionChartSvg(byTier, playerTier) {
+  const width = 560, height = 140, pad = 20;
+  const plotW = width - pad * 2, plotH = height - pad - 18;
+  const maxCount = Math.max(1, ...byTier.map(t => t.unique_players));
+  const n = byTier.length;
+  const gap = plotW / n;
+  const barW = gap * 0.7;
+
+  const bars = byTier.map((t, i) => {
+    const barH = (t.unique_players / maxCount) * plotH;
+    const xPos = pad + i * gap + (gap - barW) / 2;
+    const yPos = pad + plotH - barH;
+    const color = t.tier === playerTier ? 'var(--accent)' : 'var(--border)';
+    return `<rect x="${xPos.toFixed(1)}" y="${yPos.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(1, barH).toFixed(1)}" fill="${color}"><title>${t.rank_name}: ${t.unique_players.toLocaleString()} ranked players</title></rect>`;
+  }).join('');
+
+  const labels = byTier.map((t, i) => {
+    const xPos = pad + i * gap + gap / 2;
+    return `<text x="${xPos.toFixed(1)}" y="${height - 4}" text-anchor="middle" font-size="8" fill="${t.tier === playerTier ? 'var(--accent)' : 'var(--muted)'}">${t.rank_name.slice(0, 3)}</text>`;
+  }).join('');
+
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" style="overflow:visible;">
+    ${bars}
+    ${labels}
+  </svg>`;
+}
+
+function renderPercentile(data) {
+  const el = document.getElementById('percentileContent');
+  el.innerHTML = `
+    <div class="section-label" style="margin-top:0;">Rank Percentile</div>
+    <div class="muted" style="margin-bottom:8px; font-size:0.85rem;">${data.rank_label} — better than ${data.percentile_better_than}% of ranked players</div>
+    ${rankDistributionChartSvg(data.by_tier, data.player_tier)}`;
+}
+
+async function refreshPercentile() {
+  if (!currentAccountId) return;
+  const el = document.getElementById('percentileContent');
+  try {
+    const resp = await fetch(`/players/${currentAccountId}/percentile`);
+    if (!resp.ok) {
+      el.innerHTML = '';
+      return;
+    }
+    const data = await resp.json();
+    renderPercentile(data);
+  } catch (e) {
+    el.innerHTML = '';
   }
 }
 
@@ -313,8 +509,7 @@ function matchRowHtml(m) {
   </tr>`;
 }
 
-function renderMatches(matches) {
-  const el = document.getElementById('matchesContent');
+function renderMatches(el, matches) {
   if (!matches || matches.length === 0) {
     el.innerHTML = `<span class="muted">No matches found.</span>`;
     return;
@@ -341,22 +536,6 @@ function formatGameTime(seconds) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function purchaseRowHtml(p) {
-  return `<div class="timeline-item">
-    <span class="time">${formatGameTime(p.game_time_s)}</span>
-    <span style="flex:1;">${p.item_name}</span>
-    ${p.sold_time_s != null ? `<span class="muted">sold @ ${formatGameTime(p.sold_time_s)}</span>` : ''}
-  </div>`;
-}
-
-function abilityRowHtml(a) {
-  return `<div class="timeline-item">
-    <span class="time">${formatGameTime(a.game_time_s)}</span>
-    <span style="flex:1;">${a.ability_name}</span>
-    <span class="muted">Lv${a.level}</span>
-  </div>`;
-}
-
 async function showMatchTimeline(matchId) {
   const el = document.getElementById('itemsContent');
   el.innerHTML = `<span class="muted">Loading...</span>`;
@@ -374,20 +553,173 @@ async function showMatchTimeline(matchId) {
   }
 }
 
+function niceMinuteStep(maxT) {
+  const totalMin = maxT / 60;
+  for (const step of [1, 2, 5, 10, 15, 20]) {
+    if (totalMin / step <= 8) return step;
+  }
+  return 30;
+}
+
+function itemTooltipHtml(name, image, timeLabel) {
+  const img = image
+    ? `<img src="${image}" style="width:40px;height:40px;border-radius:4px;flex-shrink:0;object-fit:contain;background:var(--bg);">`
+    : '';
+  return `<div style="display:flex;gap:8px;align-items:center;">${img}<div>${name}<br><span class="muted">${timeLabel}</span></div></div>`;
+}
+
+function buildTimelineChartSvg(purchases, abilities, durationS) {
+  const width = 560, rowH = 34, leftPad = 62, rightPad = 10, topPad = 10, axisLabelH = 18;
+  const height = topPad + rowH * 2 + axisLabelH;
+  const plotW = width - leftPad - rightPad;
+  const allTimes = [...purchases.map(p => p.game_time_s), ...abilities.map(a => a.game_time_s), durationS || 0, 60];
+  const maxT = Math.max(...allTimes);
+
+  const x = t => leftPad + (t / maxT) * plotW;
+  const itemsY = topPad + rowH / 2;
+  const abilitiesY = topPad + rowH * 1.5;
+
+  const step = niceMinuteStep(maxT);
+  const gridTimes = [];
+  for (let t = 0; t <= maxT; t += step * 60) gridTimes.push(t);
+
+  const gridLines = gridTimes.map(t => `
+    <line x1="${x(t).toFixed(1)}" y1="${topPad}" x2="${x(t).toFixed(1)}" y2="${topPad + rowH * 2}" stroke="var(--border)" stroke-width="1"/>
+    <text x="${x(t).toFixed(1)}" y="${topPad + rowH * 2 + 13}" text-anchor="middle" font-size="9" fill="var(--muted)">${formatGameTime(t)}</text>`).join('');
+
+  const itemMarks = purchases.map(p => {
+    const bx = x(p.game_time_s).toFixed(1);
+    const buyTip = escapeHtmlAttr(itemTooltipHtml(p.item_name, p.item_image, `bought @ ${formatGameTime(p.game_time_s)}`));
+    const soldPart = p.sold_time_s != null ? `
+      <line x1="${bx}" y1="${itemsY}" x2="${x(p.sold_time_s).toFixed(1)}" y2="${itemsY}" stroke="var(--accent)" stroke-width="2" opacity="0.35"/>
+      <circle class="chart-marker" cx="${x(p.sold_time_s).toFixed(1)}" cy="${itemsY}" r="3" fill="var(--bg)" stroke="var(--accent)" stroke-width="1.5" data-tip="${escapeHtmlAttr(itemTooltipHtml(p.item_name, p.item_image, `sold @ ${formatGameTime(p.sold_time_s)}`))}"></circle>` : '';
+    return `${soldPart}<circle class="chart-marker" cx="${bx}" cy="${itemsY}" r="4" fill="var(--accent)" data-tip="${buyTip}"></circle>`;
+  }).join('');
+
+  const abilityMarks = abilities.map(a => {
+    const ax = x(a.game_time_s).toFixed(1);
+    const tip = escapeHtmlAttr(`${a.ability_name} <span class="muted">Lv${a.level}</span><br><span class="muted">@ ${formatGameTime(a.game_time_s)}</span>`);
+    return `<rect class="chart-marker" x="${ax - 3}" y="${abilitiesY - 3}" width="6" height="6" fill="var(--accent2)" transform="rotate(45 ${ax} ${abilitiesY})" data-tip="${tip}"></rect>`;
+  }).join('');
+
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" style="overflow:visible;">
+    <text x="4" y="${itemsY + 3}" font-size="10" fill="var(--muted)">Items</text>
+    <text x="4" y="${abilitiesY + 3}" font-size="10" fill="var(--muted)">Abilities</text>
+    ${gridLines}
+    <line x1="${leftPad}" y1="${itemsY}" x2="${width - rightPad}" y2="${itemsY}" stroke="var(--border)" stroke-width="1"/>
+    <line x1="${leftPad}" y1="${abilitiesY}" x2="${width - rightPad}" y2="${abilitiesY}" stroke="var(--border)" stroke-width="1"/>
+    ${itemMarks}
+    ${abilityMarks}
+  </svg>`;
+}
+
+function matchNetWorthChartSvg(series, durationS) {
+  const width = 560, height = 150, pad = 34;
+  const plotW = width - pad * 2, plotH = height - pad * 2;
+  const maxT = Math.max(durationS || 0, ...series.map(s => s.time_s), 60);
+  const maxVal = Math.max(1, ...series.map(s => s.net_worth));
+
+  const x = t => pad + (t / maxT) * plotW;
+  const y = v => pad + plotH - (v / maxVal) * plotH;
+
+  const step = niceMinuteStep(maxT);
+  const gridTimes = [];
+  for (let t = 0; t <= maxT; t += step * 60) gridTimes.push(t);
+
+  const hLines = [0, 0.25, 0.5, 0.75, 1].map(f => {
+    const yy = pad + plotH - f * plotH;
+    return `<line x1="${pad}" y1="${yy.toFixed(1)}" x2="${width - pad}" y2="${yy.toFixed(1)}" stroke="var(--border)" stroke-width="1"/>
+      <text x="${pad - 6}" y="${(yy + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--muted)">${Math.round(f * maxVal)}</text>`;
+  }).join('');
+
+  const tLabels = gridTimes.map(t => `<text x="${x(t).toFixed(1)}" y="${height - 6}" text-anchor="middle" font-size="9" fill="var(--muted)">${formatGameTime(t)}</text>`).join('');
+
+  const points = series.map(s => `${x(s.time_s).toFixed(1)},${y(s.net_worth).toFixed(1)}`).join(' ');
+  const dots = series.map(s => `<circle cx="${x(s.time_s).toFixed(1)}" cy="${y(s.net_worth).toFixed(1)}" r="2.5" fill="var(--accent)"><title>${formatGameTime(s.time_s)} — ${s.net_worth.toLocaleString()} net worth, ${s.kills}/${s.deaths}/${s.assists} KDA</title></circle>`).join('');
+
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" style="overflow:visible;">
+    ${hLines}
+    ${tLabels}
+    <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    ${dots}
+  </svg>`;
+}
+
+function teamNetWorthChartSvg(series, durationS) {
+  const width = 560, height = 150, pad = 34;
+  const plotW = width - pad * 2, plotH = height - pad * 2;
+  const maxT = Math.max(durationS || 0, ...series.map(s => s.time_s), 60);
+  const maxVal = Math.max(1, ...series.map(s => Math.max(s.team_net_worth, s.enemy_net_worth)));
+
+  const x = t => pad + (t / maxT) * plotW;
+  const y = v => pad + plotH - (v / maxVal) * plotH;
+
+  const step = niceMinuteStep(maxT);
+  const gridTimes = [];
+  for (let t = 0; t <= maxT; t += step * 60) gridTimes.push(t);
+
+  const hLines = [0, 0.25, 0.5, 0.75, 1].map(f => {
+    const yy = pad + plotH - f * plotH;
+    return `<line x1="${pad}" y1="${yy.toFixed(1)}" x2="${width - pad}" y2="${yy.toFixed(1)}" stroke="var(--border)" stroke-width="1"/>
+      <text x="${pad - 6}" y="${(yy + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--muted)">${Math.round(f * maxVal)}</text>`;
+  }).join('');
+
+  const tLabels = gridTimes.map(t => `<text x="${x(t).toFixed(1)}" y="${height - 6}" text-anchor="middle" font-size="9" fill="var(--muted)">${formatGameTime(t)}</text>`).join('');
+
+  const line = (key, color) => series.map(s => `${x(s.time_s).toFixed(1)},${y(s[key]).toFixed(1)}`).join(' ');
+  const dots = (key, color) => series.map(s => `<circle cx="${x(s.time_s).toFixed(1)}" cy="${y(s[key]).toFixed(1)}" r="2" fill="${color}"><title>${formatGameTime(s.time_s)} — ${s[key].toLocaleString()}</title></circle>`).join('');
+
+  return `<div class="chart-legend"><span><span class="dot dot-a"></span>Your team</span><span><span class="dot dot-b"></span>Enemy team</span></div>
+  <svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" style="overflow:visible;">
+    ${hLines}
+    ${tLabels}
+    <polyline points="${line('team_net_worth')}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    <polyline points="${line('enemy_net_worth')}" fill="none" stroke="var(--accent2)" stroke-width="2"/>
+    ${dots('team_net_worth', 'var(--accent)')}
+    ${dots('enemy_net_worth', 'var(--accent2)')}
+  </svg>`;
+}
+
 function renderMatchTimeline(el, data, label) {
   const heading = `${label ? label + ' — ' : ''}${data.hero_name} — match ${data.match_id}`;
-  const purchases = data.purchases && data.purchases.length
-    ? data.purchases.map(purchaseRowHtml).join('')
-    : `<span class="muted">No item purchases recorded.</span>`;
-  const abilities = data.ability_upgrades && data.ability_upgrades.length
-    ? data.ability_upgrades.map(abilityRowHtml).join('')
-    : `<span class="muted">No ability upgrades recorded.</span>`;
+  const hasPurchases = data.purchases && data.purchases.length;
+  const hasAbilities = data.ability_upgrades && data.ability_upgrades.length;
+  const buildChart = (hasPurchases || hasAbilities)
+    ? buildTimelineChartSvg(data.purchases || [], data.ability_upgrades || [], data.match_duration_s)
+    : `<span class="muted">No item or ability data recorded for this match.</span>`;
+  const perfChart = data.stats && data.stats.length >= 2
+    ? `<div class="section-label">Net Worth This Match</div>${matchNetWorthChartSvg(data.stats, data.match_duration_s)}`
+    : '';
+  const teamChart = data.team_net_worth && data.team_net_worth.length >= 2
+    ? `<div class="section-label" style="margin-top:0;">Team Net Worth (game swing)</div>${teamNetWorthChartSvg(data.team_net_worth, data.match_duration_s)}`
+    : '';
   el.innerHTML = `
     <div class="muted" style="margin-bottom:8px;">${heading}</div>
-    <div class="section-label">Items</div>
-    ${purchases}
-    <div class="section-label">Abilities</div>
-    ${abilities}`;
+    ${teamChart}
+    ${perfChart}
+    <div class="section-label">Build Timeline (hover a point for details)</div>
+    ${buildChart}`;
+  wireChartTooltips(el);
+}
+
+function wireChartTooltips(container) {
+  const tip = document.getElementById('chartTooltip');
+  const positionTooltip = (evt) => {
+    const pad = 14;
+    tip.style.left = `${evt.clientX + pad}px`;
+    tip.style.top = `${evt.clientY + pad}px`;
+  };
+  container.querySelectorAll('[data-tip]').forEach(node => {
+    node.addEventListener('mouseenter', (evt) => {
+      tip.innerHTML = node.getAttribute('data-tip');
+      tip.style.display = 'block';
+      positionTooltip(evt);
+    });
+    node.addEventListener('mousemove', positionTooltip);
+    node.addEventListener('mouseleave', () => {
+      tip.style.display = 'none';
+    });
+  });
 }
 
 async function refreshStats() {
@@ -395,9 +727,13 @@ async function refreshStats() {
   try {
     const resp = await fetch(`/players/${currentAccountId}/stats`);
     const data = await resp.json();
-    renderStats(data);
+    document.getElementById('rankedStatsCount').textContent = `${data.ranked.all_time.games} games`;
+    document.getElementById('standardStatsCount').textContent = `${data.standard.all_time.games} games`;
+    renderStatsSection(document.getElementById('rankedStatsContent'), data.ranked);
+    renderStatsSection(document.getElementById('standardStatsContent'), data.standard);
   } catch (e) {
-    document.getElementById('statsContent').innerHTML = `<span class="muted">Failed to fetch stats.</span>`;
+    document.getElementById('rankedStatsContent').innerHTML = `<span class="muted">Failed to fetch stats.</span>`;
+    document.getElementById('standardStatsContent').innerHTML = '';
   }
 }
 
@@ -416,11 +752,9 @@ function statBlock(summary) {
   </div>`;
 }
 
-function renderStats(data) {
-  const el = document.getElementById('statsContent');
+function renderStatsSection(el, data) {
   if (!data.all_time || data.all_time.games === 0) {
-    el.innerHTML = `<span class="muted">No ranked/scored matches found yet.</span>`;
-    updateTopHeroes([]);
+    el.innerHTML = `<span class="muted">No matches in this category yet.</span>`;
     return;
   }
 
@@ -449,21 +783,11 @@ function renderStats(data) {
         <tbody>${heroRows}</tbody>
       </table>
     </div>`;
-
-  updateTopHeroes(data.recent_by_hero || []);
 }
 
 const TOP_HERO_MIN_GAMES = 2;
 const TOP_HERO_COUNT = 3;
 let topHeroNames = [];
-
-function updateTopHeroes(recentByHero) {
-  topHeroNames = recentByHero
-    .filter(h => h.games >= TOP_HERO_MIN_GAMES)
-    .slice(0, TOP_HERO_COUNT)
-    .map(h => h.hero_name);
-  renderPatches();
-}
 
 function setCompareStatus(msg) {
   document.getElementById('compareStatus').textContent = msg;
@@ -657,19 +981,72 @@ async function loadHeroWinrate(heroId) {
   const el = document.getElementById('heroWinrateContent');
   el.innerHTML = `<span class="muted">Loading...</span>`;
   try {
-    const resp = await fetch(`/heroes/${heroId}/winrate`);
-    if (!resp.ok) {
+    const [winrateResp, trendResp, matchupsResp] = await Promise.all([
+      fetch(`/heroes/${heroId}/winrate`),
+      fetch(`/heroes/${heroId}/trend`),
+      fetch(`/heroes/${heroId}/matchups`),
+    ]);
+    if (!winrateResp.ok) {
       el.innerHTML = `<span class="muted">Could not load win rate for this hero.</span>`;
       return;
     }
-    const data = await resp.json();
-    renderHeroWinrate(data);
+    const data = await winrateResp.json();
+    const trend = trendResp.ok ? await trendResp.json() : null;
+    const matchups = matchupsResp.ok ? await matchupsResp.json() : null;
+    renderHeroWinrate(data, trend, matchups);
   } catch (e) {
     el.innerHTML = `<span class="muted">Failed to fetch hero win rate.</span>`;
   }
 }
 
-function renderHeroWinrate(data) {
+function heroTrendChartSvg(weekly) {
+  const width = 560, height = 130, pad = 30;
+  const plotW = width - pad * 2, plotH = height - pad * 2;
+  const rates = weekly.map(w => w.win_rate);
+  const minR = Math.min(...rates), maxR = Math.max(...rates);
+  const padRange = Math.max(1, maxR - minR) * 0.3;
+  const yMin = minR - padRange, yMax = maxR + padRange;
+
+  const n = weekly.length;
+  const x = i => pad + (n <= 1 ? 0 : (i / (n - 1)) * plotW);
+  const y = v => pad + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+  const points = weekly.map((w, i) => `${x(i).toFixed(1)},${y(w.win_rate).toFixed(1)}`).join(' ');
+  const dots = weekly.map((w, i) => {
+    const date = new Date(w.week_start_unix * 1000).toLocaleDateString();
+    return `<circle cx="${x(i).toFixed(1)}" cy="${y(w.win_rate).toFixed(1)}" r="3" fill="var(--accent)"><title>Week of ${date}: ${w.win_rate}% (${w.matches.toLocaleString()} matches)</title></circle>`;
+  }).join('');
+  const yLabels = [yMin, (yMin + yMax) / 2, yMax].map(v => `<text x="${pad - 6}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--muted)">${v.toFixed(1)}%</text>`).join('');
+
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" style="overflow:visible;">
+    ${yLabels}
+    <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    ${dots}
+  </svg>`;
+}
+
+function matchupRowHtml(m, color) {
+  return `<div class="matchup-row">
+    <span class="matchup-name">${m.enemy_hero_name}</span>
+    <span class="matchup-bar-track"><span class="matchup-bar-fill" style="width:${m.win_rate}%; background:${color};"></span></span>
+    <span class="matchup-pct">${m.win_rate}%</span>
+  </div>`;
+}
+
+function renderMatchupsHtml(matchups) {
+  if (!matchups || (!matchups.best_matchups.length && !matchups.worst_matchups.length)) {
+    return `<span class="muted">Not enough matchup data yet.</span>`;
+  }
+  const best = matchups.best_matchups.map(m => matchupRowHtml(m, 'var(--win)')).join('');
+  const worst = matchups.worst_matchups.map(m => matchupRowHtml(m, 'var(--loss)')).join('');
+  return `
+    <div class="section-label" style="margin-top:0;">Best Matchups (highest win rate against)</div>
+    ${best}
+    <div class="section-label">Toughest Matchups (lowest win rate against)</div>
+    ${worst}`;
+}
+
+function renderHeroWinrate(data, trend, matchups) {
   const el = document.getElementById('heroWinrateContent');
   const rankRows = data.by_rank.map(r => `<tr>
     <td>${r.rank_label}</td>
@@ -677,15 +1054,22 @@ function renderHeroWinrate(data) {
     <td class="rank-bar-cell"><div class="rank-bar" style="width:${r.win_rate}%;"></div><span>${r.win_rate}%</span></td>
   </tr>`).join('');
 
+  const trendSection = trend && trend.weekly && trend.weekly.length >= 2
+    ? `<div class="section-label">Win Rate Trend (weekly)</div>${heroTrendChartSvg(trend.weekly)}`
+    : '';
+
   el.innerHTML = `
     <div class="stat-grid" style="grid-template-columns: repeat(2, 1fr); margin-bottom:16px;">
       ${statTile('Overall Win Rate', data.overall.win_rate != null ? data.overall.win_rate + '%' : '-')}
       ${statTile('Unranked Win Rate', data.unranked && data.unranked.win_rate != null ? data.unranked.win_rate + '%' : '-')}
     </div>
+    ${trendSection}
+    <div class="section-label">By Rank</div>
     <table>
       <thead><tr><th>Rank</th><th>Matches</th><th>Win Rate</th></tr></thead>
       <tbody>${rankRows}</tbody>
-    </table>`;
+    </table>
+    ${renderMatchupsHtml(matchups)}`;
 }
 
 function formatPatchDate(iso) {
@@ -747,9 +1131,124 @@ function renderPatches() {
     </details>`).join('');
 }
 
+async function copyIngestCommand() {
+  const text = document.getElementById('ingestCmd').textContent;
+  const btn = document.getElementById('ingestCopyBtn');
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = 'Copied!';
+  } catch (e) {
+    btn.textContent = 'Copy failed';
+  }
+  setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+}
+
+let friends = JSON.parse(localStorage.getItem('deadtracker_friends') || '[]');
+let friendsTimer = null;
+
+function saveFriends() {
+  localStorage.setItem('deadtracker_friends', JSON.stringify(friends));
+}
+
+function setFriendStatus(msg) {
+  document.getElementById('friendStatus').textContent = msg;
+}
+
+async function addFriend() {
+  const val = document.getElementById('friendInput').value.trim();
+  if (!val) return;
+  document.getElementById('friendCandidates').innerHTML = '';
+  setFriendStatus(`Resolving '${val}'...`);
+
+  try {
+    const data = await resolveQuery(val);
+    if (data.account_id != null) {
+      addFriendToList(data.account_id, val);
+    } else if (data.candidates) {
+      renderFriendCandidates(data.candidates);
+    }
+  } catch (e) {
+    setFriendStatus(e.message || 'Failed to resolve player.');
+  }
+}
+
+function escapeHtmlAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderFriendCandidates(candidates) {
+  setFriendStatus('Multiple profiles match — pick one:');
+  const el = document.getElementById('friendCandidates');
+  el.innerHTML = candidates.map(c => `
+    <div class="candidate" onclick="addFriendToList(${c.account_id}, ${escapeHtmlAttr(JSON.stringify(c.personaname ?? 'Unknown'))})">
+      ${c.avatar ? `<img src="${c.avatar}">` : ''}
+      <span>${c.personaname ?? 'Unknown'} <span class="muted">(account_id=${c.account_id})</span></span>
+    </div>`).join('');
+}
+
+function addFriendToList(accountId, label) {
+  document.getElementById('friendCandidates').innerHTML = '';
+  document.getElementById('friendInput').value = '';
+  if (friends.some(f => f.account_id === accountId)) {
+    setFriendStatus('Already in your friends list.');
+    return;
+  }
+  setFriendStatus('');
+  friends.push({ account_id: accountId, label });
+  saveFriends();
+  renderFriends();
+  refreshFriendsLiveStatus();
+}
+
+function removeFriend(accountId) {
+  friends = friends.filter(f => f.account_id !== accountId);
+  saveFriends();
+  renderFriends();
+}
+
+function renderFriends() {
+  const el = document.getElementById('friendsList');
+  if (!friends.length) {
+    el.innerHTML = `<span class="muted">No friends added yet.</span>`;
+    return;
+  }
+  el.innerHTML = friends.map(f => `
+    <div class="friend-row" id="friend-${f.account_id}">
+      <span>${f.label} <span class="muted">(account_id=${f.account_id})</span></span>
+      <span class="live-badge live-no friend-live-badge">checking...</span>
+      <button class="friend-remove" onclick="removeFriend(${f.account_id})">Remove</button>
+    </div>`).join('');
+}
+
+async function refreshFriendsLiveStatus() {
+  if (!friends.length) return;
+  try {
+    const ids = friends.map(f => f.account_id).join(',');
+    const resp = await fetch(`/players/live-batch?account_ids=${ids}`);
+    const data = await resp.json();
+    for (const r of data.results) {
+      const row = document.getElementById(`friend-${r.account_id}`);
+      if (!row) continue;
+      const badge = row.querySelector('.friend-live-badge');
+      if (r.live && r.match) {
+        badge.className = 'live-badge live-yes friend-live-badge';
+        badge.textContent = `LIVE — ${r.match.hero_name ?? '?'}`;
+      } else {
+        badge.className = 'live-badge live-no friend-live-badge';
+        badge.textContent = 'OFFLINE';
+      }
+    }
+  } catch (e) {
+    // leave badges as-is on a failed poll
+  }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   loadHeroList();
   loadPatches();
+  renderFriends();
+  refreshFriendsLiveStatus();
+  friendsTimer = setInterval(refreshFriendsLiveStatus, LIVE_POLL_MS);
   const saved = localStorage.getItem('deadtracker_account_id');
   if (saved) startTracking(saved);
 });

@@ -5,3 +5,4 @@ logs/
 .venv/
 venv/
 .env
+deadtracker_context_for_claude_ai.md
