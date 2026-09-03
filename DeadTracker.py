@@ -39,6 +39,7 @@ from fetch_match_history import (
     fetch_performance_curve,
     fetch_ranks,
     fetch_released_hero_ids,
+    format_game_mode,
     format_match_mode,
     format_rank,
     parse_account_id_input,
@@ -406,6 +407,44 @@ def get_player_percentile(account_id: int):
     }
 
 
+@app.get("/players/{account_id}/rank-progress")
+def get_rank_progress(account_id: int):
+    conn = cache.get_conn()
+    cache.init_db(conn)
+    try:
+        matches = get_match_history(conn, account_id, refresh=False)
+        ranks = get_ranks(conn)
+    finally:
+        conn.close()
+
+    # Only matches after placement (calibration) is complete have a real
+    # ranked_delta - calibration games report delta=0 and badge=0.
+    ranked = [
+        m
+        for m in matches
+        if m.get("match_mode") == 4 and m.get("ranked_calibration_match") == 0 and m.get("ranked_delta") is not None
+    ]
+    ranked.sort(key=lambda m: m["start_time"])
+
+    progression = []
+    running = 0
+    for m in ranked:
+        running += m["ranked_delta"]
+        progression.append(
+            {
+                "match_id": m["match_id"],
+                "start_time": m["start_time"],
+                "delta": m["ranked_delta"],
+                "cumulative": running,
+                "outcome": m["player_match_outcome"],
+                "badge": m.get("ranked_display_badge"),
+                "rank_label": format_rank(m.get("ranked_display_badge"), ranks),
+            }
+        )
+
+    return {"account_id": account_id, "progression": progression}
+
+
 def get_match_history(conn, account_id: int, refresh: bool) -> list[dict]:
     matches = None if refresh else cache.get_cached_match_history(conn, account_id)
     if matches is None:
@@ -500,6 +539,17 @@ def get_live_status_batch(conn, account_ids: list[int], refresh: bool) -> dict[i
                         "hero_name": heroes.get(hero_id, f"hero_id {hero_id}") if hero_id is not None else None,
                         "team": player.get("team"),
                         "spectators": match.get("spectators"),
+                        "match_mode_label": match.get("match_mode_parsed") or format_match_mode(match.get("match_mode")),
+                        "game_mode_label": format_game_mode(match.get("game_mode_parsed")),
+                        "players": [
+                            {
+                                "account_id": p.get("account_id"),
+                                "hero_id": p.get("hero_id"),
+                                "hero_name": heroes.get(p.get("hero_id"), f"hero_id {p.get('hero_id')}"),
+                                "team": p.get("team"),
+                            }
+                            for p in match.get("players", [])
+                        ],
                     },
                 }
             cache.set_cached_live_status(conn, account_id, status)

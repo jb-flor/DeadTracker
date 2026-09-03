@@ -209,6 +209,16 @@ def format_match_mode(match_mode: int | None) -> str:
     return MATCH_MODE_LABELS.get(match_mode, f"mode {match_mode}")
 
 
+def format_game_mode(game_mode_parsed: str | None) -> str:
+    """deadlock-api's active-match data gives the game mode as an already-parsed
+    enum name like 'KECitadelGameModeStreetBrawl' - strip the prefix and space
+    out the CamelCase for display (-> 'Street Brawl')."""
+    if not game_mode_parsed:
+        return "Unknown"
+    name = game_mode_parsed.removeprefix("KECitadelGameMode")
+    return re.sub(r"(?<!^)(?=[A-Z])", " ", name).strip()
+
+
 def format_rank(badge: int | None, ranks_by_tier: dict[int, str]) -> str:
     if badge is None:
         return "-"

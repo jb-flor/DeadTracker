@@ -149,6 +149,12 @@
   }
   .chart-marker { cursor: pointer; }
   .chart-marker:hover { filter: brightness(1.5); }
+  .scout-row { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+  .scout-row:last-child { border-bottom: none; }
+  .scout-row-main { display: flex; justify-content: space-between; cursor: pointer; }
+  .scout-row-main:hover { color: var(--accent); }
+  .scout-stats { margin-top: 2px; font-size: 0.8rem; min-height: 1em; }
+  .mode-flair { display: inline-block; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; padding: 3px 9px; border-radius: 999px; background: rgba(124, 156, 255, 0.15); color: var(--accent); margin-left: 6px; }
 </style>
 </head>
 <body>
@@ -200,6 +206,7 @@
   <div class="panel">
     <h2>Stats</h2>
     <div id="percentileContent" class="muted"></div>
+    <div id="rankProgressContent" class="muted"></div>
     <details class="patch-entry" open>
       <summary class="patch-summary"><span><span class="patch-marker"></span><span class="patch-title">Ranked</span></span><span class="patch-date" id="rankedStatsCount"></span></summary>
       <div id="rankedWinLossTrend" class="muted"></div>
@@ -319,6 +326,7 @@ function startTracking(accountId) {
   refreshMatches();
   refreshStats();
   refreshPercentile();
+  refreshRankProgress();
   liveTimer = setInterval(refreshLive, LIVE_POLL_MS);
 }
 
@@ -342,17 +350,57 @@ function renderLive(data) {
   if (data.live && data.match) {
     const m = data.match;
     const started = m.start_time ? new Date(m.start_time * 1000).toLocaleTimeString() : '?';
+    const players = m.players || [];
+    const yourTeam = players.filter(p => p.team === m.team);
+    const enemyTeam = players.filter(p => p.team !== m.team);
     el.innerHTML = `
       <span class="live-badge live-yes">LIVE</span>
+      ${m.match_mode_label ? `<span class="mode-flair">${m.match_mode_label}</span>` : ''}
+      ${m.game_mode_label ? `<span class="mode-flair">${m.game_mode_label}</span>` : ''}
       <div style="margin-top:10px;">
         Hero: <strong>${m.hero_name ?? '?'}</strong><br>
         Match ID: ${m.match_id ?? '?'}<br>
         Team: ${m.team ?? '?'}<br>
         Started: ${started}<br>
         Spectators: ${m.spectators ?? 0}
-      </div>`;
+      </div>
+      <div class="section-label">Scout: Your Team</div>
+      ${scoutTeamHtml(yourTeam)}
+      <div class="section-label">Scout: Enemy Team</div>
+      ${scoutTeamHtml(enemyTeam)}`;
   } else {
     el.innerHTML = `<span class="live-badge live-no">OFFLINE</span>`;
+  }
+}
+
+function scoutTeamHtml(players) {
+  if (!players.length) return `<span class="muted">No data.</span>`;
+  return players.map(p => `
+    <div class="scout-row" id="scout-${p.account_id}">
+      <div class="scout-row-main" onclick="loadScoutStats(${p.account_id})">
+        <span>${p.hero_name}</span>
+        <span class="muted">account_id=${p.account_id}</span>
+      </div>
+      <div class="scout-stats muted"></div>
+    </div>`).join('');
+}
+
+async function loadScoutStats(accountId) {
+  const row = document.getElementById(`scout-${accountId}`);
+  const statsEl = row.querySelector('.scout-stats');
+  if (statsEl.dataset.loaded) return;
+  statsEl.textContent = 'Loading...';
+  try {
+    const resp = await fetch(`/players/${accountId}/stats`);
+    const data = await resp.json();
+    const r = data.ranked.all_time, s = data.standard.all_time;
+    const parts = [];
+    if (r.games > 0) parts.push(`Ranked ${r.win_rate}% (${r.games}g)`);
+    if (s.games > 0) parts.push(`Standard ${s.win_rate}% (${s.games}g)`);
+    statsEl.textContent = parts.length ? parts.join(' · ') : 'No scored matches found.';
+    statsEl.dataset.loaded = '1';
+  } catch (e) {
+    statsEl.textContent = 'Failed to load stats.';
   }
 }
 
@@ -481,6 +529,56 @@ async function refreshPercentile() {
     }
     const data = await resp.json();
     renderPercentile(data);
+  } catch (e) {
+    el.innerHTML = '';
+  }
+}
+
+function rankProgressChartSvg(progression) {
+  const width = 560, height = 150, pad = 34;
+  const plotW = width - pad * 2, plotH = height - pad * 2;
+  const values = progression.map(p => p.cumulative);
+  const minV = Math.min(0, ...values), maxV = Math.max(0, ...values);
+  const range = Math.max(1, maxV - minV);
+  const n = progression.length;
+
+  const x = i => pad + (n <= 1 ? 0 : (i / (n - 1)) * plotW);
+  const y = v => pad + plotH - ((v - minV) / range) * plotH;
+  const zeroY = y(0);
+
+  const points = progression.map((p, i) => `${x(i).toFixed(1)},${y(p.cumulative).toFixed(1)}`).join(' ');
+  const dots = progression.map((p, i) => {
+    const isWin = p.outcome === 1;
+    const date = new Date(p.start_time * 1000).toLocaleDateString();
+    return `<circle cx="${x(i).toFixed(1)}" cy="${y(p.cumulative).toFixed(1)}" r="3" fill="${isWin ? 'var(--win)' : 'var(--loss)'}"><title>${date} — ${p.rank_label} — ${p.delta > 0 ? '+' : ''}${p.delta}</title></circle>`;
+  }).join('');
+
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" style="overflow:visible;">
+    <line x1="${pad}" y1="${zeroY.toFixed(1)}" x2="${width - pad}" y2="${zeroY.toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3,3"/>
+    <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    ${dots}
+  </svg>`;
+}
+
+function renderRankProgress(data) {
+  const el = document.getElementById('rankProgressContent');
+  if (!data.progression || data.progression.length < 2) {
+    el.innerHTML = '';
+    return;
+  }
+  const latest = data.progression[data.progression.length - 1];
+  el.innerHTML = `
+    <div class="section-label" style="margin-top:0;">Rank Progress (current: ${latest.rank_label})</div>
+    ${rankProgressChartSvg(data.progression)}`;
+}
+
+async function refreshRankProgress() {
+  if (!currentAccountId) return;
+  const el = document.getElementById('rankProgressContent');
+  try {
+    const resp = await fetch(`/players/${currentAccountId}/rank-progress`);
+    const data = await resp.json();
+    renderRankProgress(data);
   } catch (e) {
     el.innerHTML = '';
   }
