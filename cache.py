@@ -51,10 +51,19 @@ def init_db(conn: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS live_status (account_id INTEGER PRIMARY KEY, data TEXT NOT NULL)"
     )
     conn.execute("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, type TEXT)")
-    try:
-        conn.execute("ALTER TABLE items ADD COLUMN image TEXT")
-    except sqlite3.OperationalError:
-        pass  # column already exists from a previous run
+    for col, coltype in (
+        ("image", "TEXT"),
+        ("item_slot_type", "TEXT"),
+        ("is_active_item", "INTEGER"),
+        ("cost", "INTEGER"),
+        ("description", "TEXT"),
+        ("tooltip_sections", "TEXT"),
+        ("properties", "TEXT"),
+    ):
+        try:
+            conn.execute(f"ALTER TABLE items ADD COLUMN {col} {coltype}")
+        except sqlite3.OperationalError:
+            pass  # column already exists from a previous run
     conn.execute(
         "CREATE TABLE IF NOT EXISTS match_metadata (match_id INTEGER PRIMARY KEY, data TEXT NOT NULL)"
     )
@@ -164,15 +173,46 @@ def set_cached_live_status(conn: sqlite3.Connection, account_id: int, status: di
 def get_cached_items(conn: sqlite3.Connection) -> dict[int, dict] | None:
     if not _is_fresh(conn, "items", ITEMS_TTL_S):
         return None
-    rows = conn.execute("SELECT id, name, type, image FROM items").fetchall()
-    return {row["id"]: {"name": row["name"], "type": row["type"], "image": row["image"]} for row in rows}
+    rows = conn.execute(
+        "SELECT id, name, type, image, item_slot_type, is_active_item, cost, "
+        "description, tooltip_sections, properties FROM items"
+    ).fetchall()
+    return {
+        row["id"]: {
+            "name": row["name"],
+            "type": row["type"],
+            "image": row["image"],
+            "item_slot_type": row["item_slot_type"],
+            "is_active_item": bool(row["is_active_item"]),
+            "cost": row["cost"],
+            "description": json.loads(row["description"]) if row["description"] else {},
+            "tooltip_sections": json.loads(row["tooltip_sections"]) if row["tooltip_sections"] else [],
+            "properties": json.loads(row["properties"]) if row["properties"] else {},
+        }
+        for row in rows
+    }
 
 
 def set_cached_items(conn: sqlite3.Connection, items: dict[int, dict]) -> None:
     conn.execute("DELETE FROM items")
     conn.executemany(
-        "INSERT INTO items (id, name, type, image) VALUES (?, ?, ?, ?)",
-        [(item_id, info["name"], info["type"], info.get("image")) for item_id, info in items.items()],
+        "INSERT INTO items (id, name, type, image, item_slot_type, is_active_item, "
+        "cost, description, tooltip_sections, properties) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                item_id,
+                info["name"],
+                info["type"],
+                info.get("image"),
+                info.get("item_slot_type"),
+                int(info.get("is_active_item", False)),
+                info.get("cost"),
+                json.dumps(info.get("description") or {}),
+                json.dumps(info.get("tooltip_sections") or []),
+                json.dumps(info.get("properties") or {}),
+            )
+            for item_id, info in items.items()
+        ],
     )
     _touch(conn, "items")
     conn.commit()

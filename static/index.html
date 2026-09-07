@@ -3,29 +3,61 @@
 <head>
 <meta charset="UTF-8">
 <title>DeadTracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
     color-scheme: dark;
-    --bg: #14151a;
-    --panel: #1d1f26;
-    --border: #2c2f3a;
-    --text: #e8e9ed;
-    --muted: #8b8fa3;
-    --win: #4ade80;
-    --loss: #f87171;
-    --accent: #7c9cff;
-    --accent2: #f6c453;
+    --bg: #1a1512;
+    --panel: #241d17;
+    --border: #4a4038;
+    --text: #ffefd7;
+    --muted: #a89a86;
+    --win: #6fcf7d;
+    --loss: #e2574c;
+    --accent: #70f8c1;
+    --accent2: #ffed79;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    font-family: 'Inter', -apple-system, Segoe UI, Roboto, sans-serif;
     padding: 24px;
   }
-  h1 { font-size: 1.3rem; margin: 0 0 16px; }
+  .header { text-align: center; margin-bottom: 20px; }
+  h1 {
+    font-family: 'Cinzel', serif;
+    font-weight: 700;
+    font-size: 2.4rem;
+    letter-spacing: 0.06em;
+    margin: 0 0 4px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: var(--accent);
+  }
   .row { display: flex; gap: 8px; margin-bottom: 20px; }
+  .tab-bar { display: flex; justify-content: center; gap: 28px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .tab-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-family: 'Cinzel', serif;
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 10px 4px 12px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tab-btn:hover { color: var(--text); opacity: 1; }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
   input {
     flex: 1;
     background: var(--panel);
@@ -37,7 +69,7 @@
   }
   button {
     background: var(--accent);
-    color: #0e0f13;
+    color: #170f0a;
     border: none;
     padding: 8px 16px;
     border-radius: 6px;
@@ -52,10 +84,10 @@
     padding: 16px;
     margin-bottom: 20px;
   }
-  .panel h2 { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 0 0 12px; }
+  .panel h2 { font-family: 'Cinzel', serif; font-weight: 600; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 0 0 12px; }
   .live-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
-  .live-yes { background: rgba(74, 222, 128, 0.15); color: var(--win); }
-  .live-no { background: rgba(139, 143, 163, 0.15); color: var(--muted); }
+  .live-yes { background: rgba(111, 207, 125, 0.15); color: var(--win); }
+  .live-no { background: rgba(168, 154, 134, 0.15); color: var(--muted); }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 500; font-size: 0.8rem; }
@@ -88,7 +120,7 @@
   .compare-columns h3 { font-size: 0.9rem; margin: 0 0 4px; }
   .mini-match { padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; display: flex; justify-content: space-between; }
   .mini-match:hover { background: var(--border); }
-  .mini-match.selected { background: rgba(124, 156, 255, 0.15); }
+  .mini-match.selected { background: rgba(112, 248, 193, 0.15); }
   .chart-legend { display: flex; gap: 16px; font-size: 0.8rem; color: var(--muted); margin: 6px 0 10px; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
   .dot-a { background: var(--accent); }
@@ -102,7 +134,7 @@
     font-size: 0.95rem;
   }
   .rank-bar-cell { position: relative; }
-  .rank-bar { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(124, 156, 255, 0.18); border-radius: 3px; }
+  .rank-bar { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(112, 248, 193, 0.18); border-radius: 3px; }
   .rank-bar-cell span { position: relative; }
   tr.hero-row { cursor: pointer; }
   tr.hero-row:hover { background: var(--border); }
@@ -118,8 +150,8 @@
   .patch-body p { margin: 0 0 8px; }
   .patch-body a { color: var(--accent); }
   .patch-source { display: inline-block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; margin-right: 8px; }
-  .patch-entry.patch-highlighted { background: rgba(124, 156, 255, 0.08); border-left: 3px solid var(--accent); padding-left: 8px; margin-left: -11px; }
-  .patch-hero-tag { display: inline-block; font-size: 0.7rem; font-weight: 600; color: var(--accent); background: rgba(124, 156, 255, 0.15); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
+  .patch-entry.patch-highlighted { background: rgba(112, 248, 193, 0.08); border-left: 3px solid var(--accent); padding-left: 8px; margin-left: -11px; }
+  .patch-hero-tag { display: inline-block; font-size: 0.7rem; font-weight: 600; color: var(--accent); background: rgba(112, 248, 193, 0.15); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
   .code-row { display: flex; gap: 8px; align-items: stretch; margin: 8px 0; }
   .code-row code { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-family: Consolas, Menlo, monospace; font-size: 0.85rem; overflow-x: auto; white-space: pre; }
   .code-row button { flex-shrink: 0; }
@@ -144,9 +176,11 @@
     color: var(--text);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
     z-index: 1000;
-    white-space: nowrap;
+    white-space: normal;
+    max-width: 300px;
     line-height: 1.4;
   }
+  .chart-tooltip .highlight { color: var(--accent2); font-weight: 600; }
   .chart-marker { cursor: pointer; }
   .chart-marker:hover { filter: brightness(1.5); }
   .scout-row { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
@@ -154,12 +188,14 @@
   .scout-row-main { display: flex; justify-content: space-between; cursor: pointer; }
   .scout-row-main:hover { color: var(--accent); }
   .scout-stats { margin-top: 2px; font-size: 0.8rem; min-height: 1em; }
-  .mode-flair { display: inline-block; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; padding: 3px 9px; border-radius: 999px; background: rgba(124, 156, 255, 0.15); color: var(--accent); margin-left: 6px; }
+  .mode-flair { display: inline-block; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; padding: 3px 9px; border-radius: 999px; background: rgba(112, 248, 193, 0.15); color: var(--accent); margin-left: 6px; }
 </style>
 </head>
 <body>
   <div id="chartTooltip" class="chart-tooltip" style="display:none;"></div>
-  <h1>DeadTracker</h1>
+  <div class="header">
+    <h1>DeadTracker</h1>
+  </div>
   <div class="row">
     <input id="accountIdInput" type="text" placeholder="Steam profile URL, SteamID64, or name">
     <button onclick="track()">Track</button>
@@ -167,7 +203,14 @@
   <div id="status"></div>
   <div id="candidates"></div>
 
-  <div class="panel">
+  <div class="tab-bar">
+    <button class="tab-btn" data-tab-btn="live" onclick="showTab('live')">Live</button>
+    <button class="tab-btn" data-tab-btn="stats" onclick="showTab('stats')">Stats</button>
+    <button class="tab-btn" data-tab-btn="matches" onclick="showTab('matches')">Matches</button>
+    <button class="tab-btn" data-tab-btn="patches" onclick="showTab('patches')">Patch Notes</button>
+  </div>
+
+  <div class="panel" data-tab="live">
     <h2>Get Complete Data</h2>
     <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">DeadTracker relies on deadlock-api.com's passive data collection, which has small gaps in match history and live-match detection (a tracked player can occasionally show as offline while actually in a match). Their official fix is a lightweight local tool that contributes match IDs from your own Steam cache — not a Steam friend request.</div>
     <details class="patch-entry">
@@ -186,12 +229,12 @@
     </details>
   </div>
 
-  <div class="panel">
+  <div class="panel" data-tab="live">
     <h2>Live Status</h2>
     <div id="liveContent" class="muted">Enter an account_id above to start tracking.</div>
   </div>
 
-  <div class="panel">
+  <div class="panel" data-tab="live">
     <h2>Friends</h2>
     <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Track other players' live status alongside your own. Saved locally in this browser.</div>
     <div class="row" style="margin-bottom:8px;">
@@ -203,7 +246,7 @@
     <div id="friendsList" class="muted">No friends added yet.</div>
   </div>
 
-  <div class="panel">
+  <div class="panel" data-tab="stats">
     <h2>Stats</h2>
     <div id="percentileContent" class="muted"></div>
     <div id="rankProgressContent" class="muted"></div>
@@ -219,7 +262,7 @@
     </details>
   </div>
 
-  <div class="panel">
+  <div class="panel" data-tab="stats">
     <h2>Hero Win Rates</h2>
     <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Community-wide win rate by rank (last 30 days). Pick a hero below, or click one in your Stats above.</div>
     <div class="row" style="margin-bottom:12px;">
@@ -228,7 +271,7 @@
     <div id="heroWinrateContent" class="muted">Pick a hero to see its win rate by rank.</div>
   </div>
 
-  <div class="panel">
+  <div class="panel" data-tab="matches">
     <h2>Match History</h2>
     <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Click a match to see its item build timeline.</div>
     <details class="patch-entry" open>
@@ -241,12 +284,12 @@
     </details>
   </div>
 
-  <div class="panel">
+  <div class="panel" data-tab="matches">
     <h2>Build Timeline</h2>
     <div id="itemsContent" class="muted">Click a match above to see its item purchases and ability upgrades.</div>
   </div>
 
-  <div class="panel">
+  <div class="panel" data-tab="matches">
     <h2>Compare Build</h2>
     <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Pick one of your matches above, then search for another player and pick one of their matches to compare builds side by side.</div>
     <div class="row" style="margin-bottom:12px;">
@@ -259,7 +302,7 @@
     <div id="compareResult"></div>
   </div>
 
-  <div class="panel">
+  <div class="panel" data-tab="patches">
     <h2>Patch Notes</h2>
     <div class="muted" style="font-size:0.8rem; margin-bottom:4px;">Pulled live from Deadlock's Steam news feed — updates automatically as new patches are published, nothing to add manually.</div>
     <div id="patchHighlightNote" class="muted" style="font-size:0.8rem; margin-bottom:8px;"></div>
@@ -659,11 +702,39 @@ function niceMinuteStep(maxT) {
   return 30;
 }
 
-function itemTooltipHtml(name, image, timeLabel) {
-  const img = image
-    ? `<img src="${image}" style="width:40px;height:40px;border-radius:4px;flex-shrink:0;object-fit:contain;background:var(--bg);">`
+function statLineHtml(stat) {
+  const icon = stat.icon
+    ? `<img src="${stat.icon}" style="width:14px;height:14px;flex-shrink:0;object-fit:contain;">`
     : '';
-  return `<div style="display:flex;gap:8px;align-items:center;">${img}<div>${name}<br><span class="muted">${timeLabel}</span></div></div>`;
+  const style = stat.elevated ? 'font-weight:700;color:var(--accent2);' : '';
+  return `<div style="display:flex;align-items:center;gap:5px;font-size:0.8rem;${style}">
+    <span style="display:flex;align-items:center;gap:5px;flex:1;">${icon}${stat.label}</span>
+    <span>${stat.value}</span>
+  </div>`;
+}
+
+function itemTooltipHtml(item, timeLabel) {
+  const img = item.item_image
+    ? `<img src="${item.item_image}" style="width:40px;height:40px;border-radius:4px;flex-shrink:0;object-fit:contain;background:var(--bg);">`
+    : '';
+  const tooltip = item.tooltip || {};
+  const sectionsHtml = (tooltip.sections || []).map(sec => {
+    const narrative = sec.loc_string ? `<div style="margin:4px 0; font-size:0.8rem;">${sec.loc_string}</div>` : '';
+    return `${narrative}${(sec.stats || []).map(statLineHtml).join('')}`;
+  }).join('');
+  const hasSections = (tooltip.sections || []).some(sec => sec.loc_string || (sec.stats || []).length);
+  const fallback = !hasSections && tooltip.fallback_description
+    ? `<div style="margin:4px 0; font-size:0.8rem;">${tooltip.fallback_description}</div>`
+    : '';
+  const cost = tooltip.cost != null ? `<div class="muted" style="margin-top:4px; font-size:0.75rem;">Cost: ${tooltip.cost}</div>` : '';
+  return `<div style="display:flex; gap:8px;">
+    ${img}
+    <div style="min-width:0;">
+      <div style="font-weight:600;">${item.item_name}</div>
+      <span class="muted">${timeLabel}</span>
+      ${sectionsHtml}${fallback}${cost}
+    </div>
+  </div>`;
 }
 
 function buildTimelineChartSvg(purchases, abilities, durationS) {
@@ -687,10 +758,10 @@ function buildTimelineChartSvg(purchases, abilities, durationS) {
 
   const itemMarks = purchases.map(p => {
     const bx = x(p.game_time_s).toFixed(1);
-    const buyTip = escapeHtmlAttr(itemTooltipHtml(p.item_name, p.item_image, `bought @ ${formatGameTime(p.game_time_s)}`));
+    const buyTip = escapeHtmlAttr(itemTooltipHtml(p, `bought @ ${formatGameTime(p.game_time_s)}`));
     const soldPart = p.sold_time_s != null ? `
       <line x1="${bx}" y1="${itemsY}" x2="${x(p.sold_time_s).toFixed(1)}" y2="${itemsY}" stroke="var(--accent)" stroke-width="2" opacity="0.35"/>
-      <circle class="chart-marker" cx="${x(p.sold_time_s).toFixed(1)}" cy="${itemsY}" r="3" fill="var(--bg)" stroke="var(--accent)" stroke-width="1.5" data-tip="${escapeHtmlAttr(itemTooltipHtml(p.item_name, p.item_image, `sold @ ${formatGameTime(p.sold_time_s)}`))}"></circle>` : '';
+      <circle class="chart-marker" cx="${x(p.sold_time_s).toFixed(1)}" cy="${itemsY}" r="3" fill="var(--bg)" stroke="var(--accent)" stroke-width="1.5" data-tip="${escapeHtmlAttr(itemTooltipHtml(p, `sold @ ${formatGameTime(p.sold_time_s)}`))}"></circle>` : '';
     return `${soldPart}<circle class="chart-marker" cx="${bx}" cy="${itemsY}" r="4" fill="var(--accent)" data-tip="${buyTip}"></circle>`;
   }).join('');
 
@@ -1072,7 +1143,16 @@ async function loadHeroList() {
 function selectHeroWinrate(heroId) {
   document.getElementById('heroSelect').value = heroId;
   loadHeroWinrate(heroId);
-  document.getElementById('heroWinrateContent').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  showTab('stats');
+}
+
+function showTab(name) {
+  document.querySelectorAll('.panel[data-tab]').forEach(panel => {
+    panel.style.display = panel.getAttribute('data-tab') === name ? '' : 'none';
+  });
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-tab-btn') === name);
+  });
 }
 
 async function loadHeroWinrate(heroId) {
@@ -1342,6 +1422,7 @@ async function refreshFriendsLiveStatus() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  showTab('live');
   loadHeroList();
   loadPatches();
   renderFriends();

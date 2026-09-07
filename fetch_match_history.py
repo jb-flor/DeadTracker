@@ -105,7 +105,17 @@ def fetch_items() -> dict[int, dict]:
     resp = requests.get(f"{BASE_URL}/v1/assets/items")
     resp.raise_for_status()
     return {
-        item["id"]: {"name": item["name"], "type": item.get("type"), "image": item.get("shop_image")}
+        item["id"]: {
+            "name": item["name"],
+            "type": item.get("type"),
+            "image": item.get("shop_image"),
+            "item_slot_type": item.get("item_slot_type"),
+            "is_active_item": bool(item.get("is_active_item", False)),
+            "cost": item.get("cost"),
+            "description": item.get("description") or {},
+            "tooltip_sections": item.get("tooltip_sections") or [],
+            "properties": item.get("properties") or {},
+        }
         for item in resp.json()
     }
 

@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -562,6 +563,83 @@ def get_live_status(conn, account_id: int, refresh: bool) -> dict:
     return get_live_status_batch(conn, [account_id], refresh)[account_id]
 
 
+def _format_property_value(prop: dict) -> str:
+    value = str(prop.get("value", ""))
+    prefix = prop.get("prefix", "") or ""
+    postfix = prop.get("postfix", "") or ""
+    if prefix == "{s:sign}":
+        prefix = "" if value.startswith("-") else "+"
+    # Some properties (e.g. distances) already bake their unit into `value`
+    # ("2.0m") even though `postfix` repeats it ("m") - don't double it up.
+    if postfix and value.endswith(postfix):
+        postfix = ""
+    return f"{prefix}{value}{postfix}"
+
+
+_SVG_TAG_RE = re.compile(r"<svg[\s\S]*?</svg>")
+
+
+def _clean_loc_string(loc_string: str | None) -> str | None:
+    """deadlock-api's loc_string sometimes embeds a raw inline <svg> icon
+    (e.g. a damage-type glyph) mid-sentence - these can be large/complex and
+    break tooltip layout, so strip them and keep the surrounding text."""
+    if not loc_string:
+        return loc_string
+    return _SVG_TAG_RE.sub("", loc_string).strip()
+
+
+def resolve_item_tooltip(item: dict) -> dict:
+    """Flattens an item's raw tooltip_sections + properties (as stored in the
+    items cache) into a ready-to-render structure for the frontend - mirrors
+    Deadlock's own in-game shop tooltip rather than just showing a name."""
+    properties = item.get("properties") or {}
+    sections = []
+    for section in item.get("tooltip_sections") or []:
+        for attrs in section.get("section_attributes") or []:
+            # The API uses "elevated_properties" in some sections and
+            # "important_properties" in others for the same "highlighted key
+            # stat" concept - normalize both into one set.
+            elevated_keys = set(attrs.get("elevated_properties") or []) | set(attrs.get("important_properties") or [])
+
+            stats = []
+            seen_labels = set()
+            for prop_key in list(attrs.get("properties") or []) + list(elevated_keys):
+                if prop_key in seen_labels:
+                    continue
+                prop = properties.get(prop_key)
+                if not prop:
+                    continue
+                seen_labels.add(prop_key)
+                stats.append(
+                    {
+                        "label": prop.get("label", prop_key),
+                        "value": _format_property_value(prop),
+                        "icon": prop.get("icon"),
+                        "elevated": prop_key in elevated_keys or bool(prop.get("tooltip_is_elevated")),
+                    }
+                )
+
+            sections.append(
+                {
+                    "section_type": section.get("section_type"),
+                    "loc_string": _clean_loc_string(attrs.get("loc_string")),
+                    "stats": stats,
+                }
+            )
+
+    fallback_description = None
+    if not any(s["loc_string"] for s in sections):
+        fallback_description = _clean_loc_string((item.get("description") or {}).get("desc"))
+
+    return {
+        "item_slot_type": item.get("item_slot_type"),
+        "is_active_item": item.get("is_active_item", False),
+        "cost": item.get("cost"),
+        "sections": sections,
+        "fallback_description": fallback_description,
+    }
+
+
 def build_player_match_timeline(conn, match_id: int, account_id: int) -> dict:
     heroes = get_heroes(conn)
     items = get_items(conn)
@@ -583,6 +661,7 @@ def build_player_match_timeline(conn, match_id: int, account_id: int) -> dict:
             "item_name": items.get(entry["item_id"], {}).get("name", f"item_id {entry['item_id']}"),
             "item_image": items.get(entry["item_id"], {}).get("image"),
             "sold_time_s": entry["sold_time_s"] or None,
+            "tooltip": resolve_item_tooltip(items.get(entry["item_id"], {})),
         }
         for entry in entries
         if items.get(entry["item_id"], {}).get("type") == "upgrade"
